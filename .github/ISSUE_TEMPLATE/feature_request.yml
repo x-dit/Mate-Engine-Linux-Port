@@ -10,8 +10,8 @@ body:
       description: |
         What would you like to see added or changed?
 
-        ⚠️ Please submit only **one** feature per request. Submitting multiple features will make the request invalid and it may be ignored or deleted.
-      placeholder: "It would be great if..."
+        ⚠️ Please submit only **one** feature per request. Submitting multiple features will make the request invalid and it may be ignored or closed.
+      placeholder: "I'm always frustrated when [...]"
     validations:
       required: true
 
@@ -26,7 +26,7 @@ body:
     id: read_note
     attributes:
       label: Confirmation
-      description: Confirm you've read the guideline above.
+      description: Confirm you are not a bot.
       options:
         - label: I confirm this request includes **only one** feature.
     validations:

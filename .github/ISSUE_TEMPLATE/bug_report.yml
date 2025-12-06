@@ -1,20 +1,17 @@
 name: Report Bug
-description: Report something that's broken or not working right.
+description: Report something that's unexpected or not working correctly.
 title: "[BUG] "
 labels: ["bug"]
 body:
   - type: textarea
     id: what-happened
     attributes:
-      label: What happened?
-      description: |
-        Describe the issue in detail, including your Linux and hardware information.
-
-        ⚠️ Please report only **one** bug per issue. Submitting multiple bugs will make the report invalid and it may be ignored or deleted.
-      placeholder: "It crashed when I clicked X..."
+      label: Details
+      description: "Describe the issue in detail, and steps to reproduce it."
+      placeholder: "MateEngine crashed when I clicked on VRM/ME button..."
     validations:
       required: true
-      
+
   - type: checkboxes
     id: dependencies
     attributes:
@@ -22,26 +19,52 @@ body:
       description: Confirm you've set up your Linux environment correctly.
       options:
         - label: I already installed all of the libraries listed out in README.md, including `libayatana-appindicator3-1`
-        - label: I launch MateEngine with `launch.sh` script.
-        - label: If I use KDE, I will turn off "Allow applications to block compositing" in Compositor entry of KDE System Settings
+        - label: I launch MateEngine with `launch.sh` script
+        - label: I already enabled composition in compositor / window manager settings
+        - label: I am not using tiling window managers like i3 or Hyprland
+    validations:
+      required: true
+      
+ - type: textarea
+    id: log
+    attributes:
+      label: `-nolog` output
+      description: Terminal output when launching MateEngine with argument `-nolog`
+      placeholder: |
+        ```
+        Place the output here...
+        ```
     validations:
       required: true
 
-  - type: textarea
-    id: steps
+ - type: textarea
+    id: system-information
     attributes:
-      label: Steps to Reproduce
-      description: How can we replicate the bug?
-      placeholder: "Step-by-step instructions to trigger the issue"
+      label: System Information
+      description: "Your Linux Information."
+      placeholder: |
+        OS and version:
+        Kernel version:
+        Desktop environment:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: wm
+    attributes:
+      label: X11 or Wayland
+      description: Is your window manager based on X11 or Wayland?
+      options:
+        - "X11"
+        - "Wayland"
     validations:
       required: true
 
   - type: checkboxes
-    id: read_note
+    id: arch_btw
     attributes:
       label: Confirmation
-      description: Confirm you've read the guideline above.
       options:
-        - label: I confirm this report includes **only one** bug.
+        - label: I use Arch btw
     validations:
-      required: true
+      required: false
