@@ -1,0 +1,1554 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Linq;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using Debug = UnityEngine.Debug;
+using Unity.Burst;
+using Unity.Collections;
+
+namespace X11
+{
+    public class X11Manager : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
+    {
+        public static X11Manager Instance;
+
+        private Vector2 initialMousePos;
+        private Vector2 initialWindowPos;
+        private bool isDragging = false;
+
+        public IntPtr Display
+        {
+            get { return _display; }
+        }
+
+        public IntPtr RootWindow
+        {
+            get { return _rootWindow; }
+        }
+
+        public IntPtr UnityWindow
+        {
+            get { return _unityWindow; }
+        }
+        
+        #region Unity Events
+
+        private void OnEnable()
+        {
+            Instance = this;
+        }
+
+        void Update()
+        {
+            if (isDragging)
+            {
+                Vector2 currentMousePos = GetMousePosition();
+                Vector2 delta = currentMousePos - initialMousePos;
+                Vector2 newPos = initialWindowPos + delta;
+                SetWindowPosition(newPos);
+            }
+        }
+
+        private void Awake()
+        {
+            Init();
+            int pid = Process.GetCurrentProcess().Id;
+            List<IntPtr> windows = FindWindowsByPid(pid);
+
+            if (windows.Count > 0)
+            {
+                _unityWindow = windows[0]; // Typically the first is the main window
+                Debug.Log($"Unity window handle: 0x{_unityWindow.ToInt64():X}");
+#if !UNITY_EDITOR
+                SetWindowBorderless();
+#endif
+                QueryMonitors();
+            }
+            else
+            {
+                ShowError("No matching windows found for PID.");
+            }
+
+            EnableClickThroughTransparency();
+        }
+
+        private void OnApplicationQuit() => StartCoroutine(Dispose());
+
+        public void OnPointerDown(PointerEventData eventData)
+        {
+            initialMousePos = GetMousePosition();
+            initialWindowPos = GetWindowPosition();
+            isDragging = true;
+        }
+
+        public void OnPointerUp(PointerEventData eventData)
+        {
+            isDragging = false;
+        }
+
+        private void Init()
+        {
+            // Open X11 display
+            _display = XOpenDisplay(null);
+            if (_display == IntPtr.Zero)
+            {
+                throw new Exception("Cannot open X11 display");
+            }
+
+            _rootWindow = XDefaultRootWindow(_display);
+            _netWmState = XInternAtom(_display, "_NET_WM_STATE", false);
+            _netWmStateFullscreen = XInternAtom(_display, "_NET_WM_STATE_FULLSCREEN", false);
+            _netWmStateMaxHorz = XInternAtom(_display, "_NET_WM_STATE_MAXIMIZED_HORZ", false);
+            _netWmStateMaxVert = XInternAtom(_display, "_NET_WM_STATE_MAXIMIZED_VERT", false);
+            _netWmWindowType = XInternAtom(_display, "_NET_WM_WINDOW_TYPE", false);
+            _netWmWindowTypeDesktop = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DESKTOP", false);
+            _netWmWindowTypeDock = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DOCK", false);
+            XShapeQueryExtension(_display, out _shapeEventBase, out _shapeErrorBase);  // For shape/transparency
+        }
+        
+        private void ShowError(string error) => Debug.LogError(typeof(X11Manager) + ": " + error);
+
+        private IEnumerator Dispose()
+        {
+            running = false;
+            _shapingCts?.Cancel();
+            _shapingCts?.Token.WaitHandle.WaitOne(500); // Brief wait; adjust timeout as needed (non-blocking in Unity)
+            yield return new WaitForEndOfFrame();
+            if (_display != IntPtr.Zero)
+            {
+#if UNITY_EDITOR
+                SetTopmost(false);
+#endif
+#if !UNITY_EDITOR
+            if (damage != IntPtr.Zero)
+            {
+                XDamageDestroy(_display, damage);
+                damage = IntPtr.Zero;
+            }
+#endif
+                XSync(_display, false);
+                XCloseDisplay(_display);
+                _display = IntPtr.Zero;
+                ShowError("Goodbye!");
+            }
+            _shapingCts?.Dispose();
+        }
+        #endregion
+        
+        public Vector2 GetWindowPosition()
+        {
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                // Use XTranslateCoordinates to get absolute position
+                if (XTranslateCoordinates(_display, _unityWindow, _rootWindow, 0, 0, out int absX, out int absY, out _))
+                {
+                    return new Vector2(absX, absY) - GetRelativeWindowPosition();
+                }
+
+                ShowError("XTranslateCoordinates failed.");
+            }
+
+            return Vector2.zero;
+        }
+
+        public void SetWindowPosition(float x, float y)
+        {
+            SetWindowPosition(new Vector2(x, y));
+        }
+
+        public void SetWindowPosition(Vector2 position)
+        {
+            if (SaveLoadHandler.Instance.data.useXMoveWindow)
+            {
+                SetWindowPositionLegacy(position);
+                return;
+            }
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                IntPtr atom = XInternAtom(_display, "_NET_MOVERESIZE_WINDOW", true);
+                if (atom == IntPtr.Zero)
+                {
+                    ShowError("Cannot find atom for _NET_MOVERESIZE_WINDOW!");
+                    return;
+                }
+                XClientMessageEvent xClient = new XClientMessageEvent
+                {
+                    type = ClientMessage,
+                    window = _unityWindow,
+                    message_type = atom,
+                    format = 32,
+                    data = new IntPtr[5]
+                };
+                xClient.data[0] = new IntPtr((1 << 12) | (1 << 9) | (1 << 8) | 10);
+                xClient.data[1] = new((int)position.x);
+                xClient.data[2] = new((int)position.y);
+                xClient.data[3] = IntPtr.Zero;
+                xClient.data[4] = IntPtr.Zero;
+
+                XSendEvent(_display, _rootWindow, false, SubstructureRedirectMask | SubstructureNotifyMask, ref xClient);
+                XFlush(_display);
+            }
+        }
+
+        public void SetWindowPositionLegacy(Vector2 position)
+        {
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                XMoveWindow(_display, _unityWindow, (int)position.x, (int)position.y);
+                XFlush(_display);
+            }
+        }
+
+        public Vector2 GetRelativeWindowPosition()
+        {
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                if (GetGeometry(out _, out var x, out var y, out _, out _, out _, out _) != 0)
+                {
+                    return new Vector2(x, y);
+                }
+                ShowError("Failed to get relative window geometry.");
+            }
+            return Vector2.zero;
+        }
+        
+        private void QueryMonitors()
+        {
+            _monitors.Clear();
+            if (_display == IntPtr.Zero) return;
+
+            IntPtr event_base, error_base;
+            if (XRRQueryExtension(_display, out event_base, out error_base) == 0)
+            {
+                Debug.LogError("XRandR extension not available.");
+                return;
+            }
+
+            int major, minor;
+            if (XRRQueryVersion(_display, out major, out minor) == 0 || major < 1 || (major == 1 && minor < 3))
+            {
+                Debug.LogError("XRandR 1.3+ required for multi-monitor.");
+                return;
+            }
+
+            XRRScreenResources res = XRRGetScreenResources(_display, _rootWindow);
+            if (res.noutput <= 0)
+            {
+                XRRFreeScreenResources(res);
+                return;
+            }
+
+            for (int i = 0; i < res.noutput; i++)
+            {
+                IntPtr output = Marshal.ReadIntPtr(res.outputs, i * IntPtr.Size);
+                XRROutputInfo outInfo = XRRGetOutputInfo(_display, res, output);
+                if (outInfo.connection == 0 || outInfo.crtc == IntPtr.Zero)  // Disconnected or no CRTC
+                {
+                    XRRFreeOutputInfo(outInfo);
+                    continue;
+                }
+
+                XRRCrtcInfo crtcInfo = XRRGetCrtcInfo(_display, res, outInfo.crtc);
+                if (crtcInfo.width == 0 || crtcInfo.height == 0)
+                {
+                    XRRFreeCrtcInfo(crtcInfo);
+                    XRRFreeOutputInfo(outInfo);
+                    continue;
+                }
+
+                // Create Rect: absolute x,y from CRTC, width/height from mode
+                Rect monRect = new Rect(crtcInfo.x, crtcInfo.y, crtcInfo.width, crtcInfo.height);
+                _monitors.Add(monRect);
+
+                XRRFreeCrtcInfo(crtcInfo);
+                XRRFreeOutputInfo(outInfo);
+            }
+
+            XRRFreeScreenResources(res);
+
+            if (_monitors.Count == 0)
+            {
+                // Fallback to primary
+                _monitors.Add(new Rect(0, 0, XDisplayWidth(_display, 0), XDisplayHeight(_display, 0)));
+            }
+
+            Debug.Log($"Detected {_monitors.Count} monitors.");
+        }
+        
+        public string GetWindowType(IntPtr hwnd)  // Returns type atom name or empty
+        {
+            if (_netWmWindowType == IntPtr.Zero) return "";
+            int status = XGetWindowProperty(_display, hwnd, _netWmWindowType, 0, 1, false, (IntPtr)XaAtom, out _, out _, out ulong nItems, out _, out IntPtr prop);
+            if (status != 0 || prop == IntPtr.Zero || nItems == 0) { if (prop != IntPtr.Zero) XFree(prop); return ""; }
+            IntPtr typeAtom = Marshal.ReadIntPtr(prop);
+            XFree(prop);
+            // Map to string (add XGetAtomName if needed)
+            byte[] nameBytes = new byte[256]; int len = XGetAtomName(_display, typeAtom, nameBytes, 256);
+            return System.Text.Encoding.ASCII.GetString(nameBytes, 0, len).TrimEnd('\0');
+        }
+
+        public bool IsWindowTransparentOrClickThrough(IntPtr hwnd)  // Approx WS_EX_LAYERED/TRANSPARENT
+        {
+            // Check shape for input (click-through) or bounding shape != rect (transparent)
+            if (!XShapeQueryExtents(_display, hwnd, out bool boundingShaped, out _, out _, out _, out _)) return false;
+            if (boundingShaped) return true;  // Non-rect shape implies transparency
+            // Check input shape (empty = click-through)
+            if (!XShapeGetRectangles(_display, hwnd, ShapeInput, out _, out _, out IntPtr rects, out int nRects)) return false;
+            bool emptyInput = (nRects == 0);
+            if (rects != IntPtr.Zero) XFree(rects);
+            return emptyInput;
+        }
+
+        public Vector2 GetWindowSize()
+        {
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                int result = XGetWindowAttributes(_display, _unityWindow, out XWindowAttributes attributes);
+                if (result != 0) // Non-zero indicates success in X11
+                {
+                    return new Vector2(attributes.width, attributes.height);
+                }
+            }
+
+            return Vector2.zero;
+        }
+        
+        public void SetWindowSize(Vector2 size)
+        {
+            if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+            {
+                XResizeWindow(_display, _unityWindow, (int)size.x, (int)size.y);
+                XFlush(_display);
+            }
+        }
+
+        public Vector2 GetMousePosition()
+        {
+            // Query mouse position
+            int rootX = 0, rootY = 0;
+            IntPtr rootWindows = XRootWindow(_display, 0);
+            IntPtr rootReturn = IntPtr.Zero, childReturn = IntPtr.Zero;
+            int winX = 0, winY = 0;
+            uint maskReturn = 0;
+
+            if (!XQueryPointer(_display, rootWindows, ref rootReturn, ref childReturn, ref rootX, ref rootY, ref winX,
+                    ref winY, ref maskReturn))
+            {
+                ShowError("No mouse found.");
+                return Vector2.zero;
+            }
+
+            return new Vector2(rootX, rootY);
+        }
+        
+        public Rect GetMonitorRectFromPoint(Vector2 point)
+        {
+            return _monitors.FirstOrDefault(mon => mon.Contains(point));
+        }
+        
+        public Rect GetMonitorRectFromWindow(IntPtr window)
+        {
+            if (!GetWindowRect(window, out Rect winRect)) return new Rect();
+            Vector2 center = new Vector2(winRect.x + winRect.width / 2, winRect.y + winRect.height / 2);
+            return GetMonitorRectFromPoint(center);
+        }
+        
+        public List<Rect> GetAllMonitors()
+        {
+            return new List<Rect>(_monitors);  // Copy to prevent external modification
+        }
+
+        private List<IntPtr> FindWindowsByPid(int targetPid)
+        {
+            var result = new List<IntPtr>();
+
+            var windows = GetAllVisibleWindows();
+
+            foreach (var window in windows)
+            {
+                int pid = GetWindowPid(window);
+                if (pid == targetPid)
+                {
+                    result.Add(window);
+                }
+            }
+
+            return result;
+        }
+
+        public int GetWindowPid(IntPtr window)
+        {
+            var pidAtom = XInternAtom(_display, "_NET_WM_PID", false);
+
+            if (pidAtom == IntPtr.Zero)
+            {
+                Debug.Log("_NET_WM_PID atom not found");
+                return -1;
+            }
+            int status = XGetWindowProperty(_display, window, pidAtom,
+                0, 1, false, (IntPtr)XaCardinal,
+                out _, out _,
+                out var nItems, out _, out var prop);
+
+            if (status == 0 && prop != IntPtr.Zero && nItems > 0)
+            {
+                int pid = Marshal.ReadInt32(prop);
+                XFree(prop);
+                return pid;
+            }
+
+            return -1;
+        }
+
+        public List<IntPtr> GetAllVisibleWindows()
+        {
+            var result = new List<IntPtr>();
+
+            IntPtr clientListAtom = XInternAtom(_display, "_NET_CLIENT_LIST", true);
+            if (clientListAtom != IntPtr.Zero)
+            {
+                int status = XGetWindowProperty(_display, _rootWindow, clientListAtom, 0, 1024, false, (IntPtr)XaWindow,
+                    out IntPtr actualType, out int actualFormat, out ulong nItems, out ulong bytesAfter, out IntPtr prop);
+
+                if (status == 0 && actualType == (IntPtr)XaWindow && actualFormat == 32 && prop != IntPtr.Zero)
+                {
+                    for (ulong i = 0; i < nItems; i++)
+                    {
+                        IntPtr win = Marshal.ReadIntPtr(prop, (int)(i * (ulong)IntPtr.Size));
+                        if (IsWindowVisible(win))
+                        {
+                            result.Add(win);
+                        }
+                    }
+                    XFree(prop);
+                    return result;
+                }
+                if (prop != IntPtr.Zero) XFree(prop);
+            }
+
+            ShowError("Fallback to recursive enumeration because _NET_CLIENT_LIST is not available");
+            EnumerateWindows(_rootWindow, result);
+            return result;
+        }
+
+        private void EnumerateWindows(IntPtr window, List<IntPtr> accumulator)
+        {
+            int result = XGetWindowAttributes(_display, window, out XWindowAttributes attr);
+            if (result != 0 && attr.map_state == IsViewable)
+            {
+                accumulator.Add(window);
+
+                if (XQueryTree(_display, window, out _, out _, out var children, out var nChildren) != 0)
+                {
+                    if (children != IntPtr.Zero && nChildren > 0)
+                    {
+                        for (int i = 0; i < nChildren; i++)
+                        {
+                            IntPtr child = Marshal.ReadIntPtr(children, i * IntPtr.Size);
+                            EnumerateWindows(child, accumulator);
+                        }
+                        XFree(children);
+                    }
+                }
+            }
+        }
+
+        public bool GetWindowRect(IntPtr window, out Rect rect)
+        {
+            rect = new Rect();
+            int result = XGetWindowAttributes(_display, window, out XWindowAttributes attr);
+            if (result == 0) return false;
+
+            if (!XTranslateCoordinates(_display, window, _rootWindow, 0, 0, out int absX, out int absY, out _))
+                return false;
+
+            rect.x = absX;
+            rect.y = absY;
+            rect.width = attr.width;
+            rect.height = attr.height;
+            return true;
+        }
+
+        public void SetTopmost(bool topmost = true)
+        {
+#if UNITY_EDITOR
+            return;
+#endif
+            IntPtr wmStateAbove = XInternAtom(_display, "_NET_WM_STATE_ABOVE", true);
+            if (wmStateAbove == IntPtr.Zero)
+            {
+                ShowError("Cannot find atom for _NET_WM_STATE_ABOVE!");
+                return;
+            }
+
+            IntPtr wmNetWmState = XInternAtom(_display, "_NET_WM_STATE", true);
+            if (wmNetWmState == IntPtr.Zero)
+            {
+                ShowError("Cannot find atom for _NET_WM_STATE!");
+                return;
+            }
+
+            XClientMessageEvent xClient = new XClientMessageEvent
+            {
+                type = ClientMessage,
+                window = _unityWindow,
+                message_type = wmNetWmState,
+                format = 32,
+                data = new IntPtr[5]
+            };
+            xClient.data[0] = new IntPtr(topmost ? 1 : 0); // 1=ADD, 0=REMOVE
+            xClient.data[1] = wmStateAbove;
+            xClient.data[2] = IntPtr.Zero;
+            xClient.data[3] = IntPtr.Zero;
+            xClient.data[4] = IntPtr.Zero;
+
+            XSendEvent(_display, _rootWindow, false, 0x00100000 | 0x00080000, ref xClient);
+            XFlush(_display);
+        }
+        
+        public void HideFromTaskbar(bool reallyHide = true)
+        {
+            IntPtr netWmState = XInternAtom(_display, "_NET_WM_STATE", false);
+            IntPtr skipTaskbar = XInternAtom(_display, "_NET_WM_STATE_SKIP_TASKBAR", false);
+
+            if (netWmState == IntPtr.Zero || skipTaskbar == IntPtr.Zero)
+                return;
+
+            XClientMessageEvent msg = new()
+            {
+                type = ClientMessage,
+                display = _display,
+                window = _unityWindow,
+                message_type = netWmState,
+                format = 32,
+                data = new IntPtr[5]
+            };
+            msg.data[0] = new(reallyHide ? 1 : 0);
+            msg.data[1] = skipTaskbar;
+            msg.data[2] = IntPtr.Zero;
+            msg.data[3] = IntPtr.Zero;
+            msg.data[4] = new(1);
+                
+            XSendEvent(_display, _rootWindow, false, 0x10000L | 0x20000L, ref msg);
+            XFlush(_display);
+        }
+
+
+        private void SetWindowBorderless()
+        {
+            if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero) return;
+
+            // Remove window decorations using Motif hints
+            IntPtr motifHintsAtom = XInternAtom(_display, "_MOTIF_WM_HINTS", false);
+            XMotifWmHints hints = new XMotifWmHints
+            {
+                flags = (IntPtr)MWM_HINTS_FLAGS,
+                decorations = (IntPtr)MWM_DECORATIONS_NONE,
+                functions = IntPtr.Zero,
+                input_mode = IntPtr.Zero,
+                status = IntPtr.Zero
+            };
+            XChangeProperty(_display, _unityWindow, motifHintsAtom, motifHintsAtom, 32, PropModeReplace, ref hints, 5);
+
+            XFlush(_display);
+        }
+        
+        public string GetClassName(IntPtr window)
+        {
+            if (XGetClassHint(_display, window, out XClassHint hint) != 0)
+            {
+                string cls = Marshal.PtrToStringAnsi(hint.res_class);
+                XFree(hint.res_name);
+                XFree(hint.res_class);
+                return cls ?? "";
+            }
+
+            return "";
+        }
+        
+        public bool IsDesktop(IntPtr hwnd) => GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DESKTOP";
+        public bool IsDock(IntPtr hwnd) => GetWindowType(hwnd) == "_NET_WM_WINDOW_TYPE_DOCK";
+        
+        public bool IsAboveInZOrder(IntPtr above, IntPtr below)  // Approx: Check if 'above' is higher in stacking
+        {
+            if (above == below) return false;
+            // Use _NET_CLIENT_LIST_STACKING for top-level
+            IntPtr stackingAtom = XInternAtom(_display, "_NET_CLIENT_LIST_STACKING", false);
+            int status = XGetWindowProperty(_display, _rootWindow, stackingAtom, 0, 1024, false, (IntPtr)XaWindow, out _, out _, out ulong nItems, out _, out IntPtr prop);
+            if (status != 0 || prop == IntPtr.Zero) { if (prop != IntPtr.Zero) XFree(prop); return false; }
+            int idxAbove = -1, idxBelow = -1;
+            for (ulong i = 0; i < nItems; i++)
+            {
+                IntPtr w = Marshal.ReadIntPtr(prop, (int)i * IntPtr.Size);
+                if (w == above) idxAbove = (int)i;
+                if (w == below) idxBelow = (int)i;
+            }
+            XFree(prop);
+            return idxAbove > idxBelow;  // Higher index = topper
+        }
+
+        public bool IsWindowMaximized(IntPtr hwnd)
+        {
+            if (_netWmState == IntPtr.Zero) return false;
+            int status = XGetWindowProperty(_display, hwnd, _netWmState, 0, 1024, false, (IntPtr)XaAtom, out _, out _, out ulong nItems, out _, out IntPtr prop);
+            if (status != 0 || prop == IntPtr.Zero || nItems == 0) { if (prop != IntPtr.Zero) XFree(prop); return false; }
+            bool maxH = false, maxV = false;
+            for (ulong i = 0; i < nItems; i++)
+            {
+                IntPtr atom = Marshal.ReadIntPtr(prop, ((int)i * IntPtr.Size));
+                if (atom == _netWmStateMaxHorz) maxH = true;
+                if (atom == _netWmStateMaxVert) maxV = true;
+            }
+            XFree(prop);
+            return maxH && maxV;
+        }
+
+        public bool IsWindowFullscreen(IntPtr hwnd)
+        {
+            if (!GetWindowRect(hwnd, out Rect rect)) return false;
+            int screenW = UnityEngine.Display.main.systemWidth, screenH = UnityEngine.Display.main.systemHeight;
+            int tol = 2;
+            bool sizeMatch = Mathf.Abs((int)rect.width - screenW) <= tol && Mathf.Abs((int)rect.height - screenH) <= tol;
+            if (!sizeMatch) return false;
+            // Check _NET_WM_STATE_FULLSCREEN
+            if (_netWmState == IntPtr.Zero) return true;  // Fallback if no EWMH
+            int status = XGetWindowProperty(_display, hwnd, _netWmState, 0, 1024, false, (IntPtr)XaAtom, out _, out _, out ulong nItems, out _, out IntPtr prop);
+            bool isFS = false;
+            if (status == 0 && prop != IntPtr.Zero && nItems > 0)
+            {
+                for (ulong i = 0; i < nItems; i++)
+                {
+                    if (Marshal.ReadIntPtr(prop, (int)i * IntPtr.Size) == _netWmStateFullscreen) { isFS = true; break; }
+                }
+                XFree(prop);
+            }
+            return isFS;
+        }
+        
+        public bool IsWindowVisible(IntPtr window)
+        {
+            if (_display == IntPtr.Zero) return false;
+
+            int result = XGetWindowAttributes(_display, window, out XWindowAttributes attr);
+            if (result == 0 || attr.map_state != IsViewable) return false;
+    
+            if (!XTranslateCoordinates(_display, window, _rootWindow, 0, 0, out int absX, out int absY, out _))
+                return false;
+
+            float targetX1 = absX;
+            float targetY1 = absY;
+            float targetX2 = absX + attr.width;
+            float targetY2 = absY + attr.height;
+            float targetArea = (float)attr.width * attr.height;
+    
+            List<IntPtr> stacking = GetClientStackingList();
+            int index = stacking.IndexOf(window);
+            if (index < 0) return false;
+    
+            List<(float x1, float y1, float x2, float y2)> coversList = new();
+            for (int i = index + 1; i < stacking.Count; i++)
+            {
+                IntPtr ow = stacking[i];
+                XGetWindowAttributes(_display, ow, out XWindowAttributes oattr);
+                if (oattr.map_state != IsViewable) continue;
+
+                if (!XTranslateCoordinates(_display, ow, _rootWindow, 0, 0, out int oabsX, out int oabsY, out _))
+                    continue;
+
+                float ox1 = oabsX;
+                float oy1 = oabsY;
+                float ox2 = oabsX + oattr.width;
+                float oy2 = oabsY + oattr.height;
+        
+                float ix1 = Math.Max(targetX1, ox1);
+                float iy1 = Math.Max(targetY1, oy1);
+                float ix2 = Math.Min(targetX2, ox2);
+                float iy2 = Math.Min(targetY2, oy2);
+                if (ix1 < ix2 && iy1 < iy2)
+                {
+                    coversList.Add((ix1, iy1, ix2, iy2));
+                }
+            }
+
+            if (coversList.Count == 0) return true;
+    
+            // Burst-optimized union area computation
+            NativeArray<RectF> covers = new NativeArray<RectF>(coversList.Count, Allocator.Temp);
+            for (int i = 0; i < coversList.Count; i++)
+            {
+                var t = coversList[i];
+                covers[i] = new RectF { x1 = t.x1, y1 = t.y1, x2 = t.x2, y2 = t.y2 };
+            }
+            float coveredArea = UnionAreaCalculator.Compute(covers);
+            covers.Dispose();
+    
+            return coveredArea < targetArea - 1e-4f;
+        }
+
+        private bool IsCompositionSupported()
+        {
+            for (int screen = 0; screen < XScreenCount(_display); screen++)
+            {
+                IntPtr selectionAtom = XInternAtom(_display, "_NET_WM_CM_S" + screen, false);
+                if (selectionAtom == IntPtr.Zero)
+                    continue;
+                return XGetSelectionOwner(_display, selectionAtom) != 0;
+            }
+            return false;
+        }
+
+        private List<IntPtr> GetWindowPropertyAtoms(IntPtr window, IntPtr property)
+        {
+            var atoms = new List<IntPtr>();
+            int status = XGetWindowProperty(_display, window, property, 0, 1024, false, (IntPtr)XaAtom,
+                out _, out _, out ulong nItems, out _, out IntPtr prop);
+
+            if (status == 0 && prop != IntPtr.Zero && nItems > 0)
+            {
+                for (ulong i = 0; i < nItems; i++)
+                {
+                    IntPtr atom = Marshal.ReadIntPtr(prop, (int)(i * (ulong)IntPtr.Size));
+                    atoms.Add(atom);
+                }
+
+                XFree(prop);
+            }
+
+            return atoms;
+        }
+        
+        private List<IntPtr> GetClientStackingList()
+        {
+            IntPtr atom = XInternAtom(_display, "_NET_CLIENT_LIST_STACKING", false);
+            if (atom == IntPtr.Zero) return new List<IntPtr>();
+
+            int status = XGetWindowProperty(_display, _rootWindow, atom, 0, 1024, false, (IntPtr)XaWindow,
+                out _, out int actualFormat, out ulong nItems, out _, out IntPtr prop);
+
+            if (status != 0 || prop == IntPtr.Zero || nItems == 0 || actualFormat != 32)
+            {
+                if (prop != IntPtr.Zero) XFree(prop);
+                return new List<IntPtr>();
+            }
+
+            List<IntPtr> windows = new List<IntPtr>((int)nItems);
+            for (int i = 0; i < (int)nItems; i++)
+            {
+                IntPtr w = Marshal.ReadIntPtr(prop, (i * IntPtr.Size));
+                windows.Add(w);
+            }
+            XFree(prop);
+            return windows;
+        }
+        
+        #region Window Shaping Logic
+        
+        private void EnableClickThroughTransparency()
+        {
+            if (transparentInputEnabled) return;
+            SetupTransparentInput();
+            transparentInputEnabled = true;
+            ApplyShaping();
+        }
+
+        private void SetupTransparentInput()
+        {
+            if (XGetWindowAttributes(_display, _unityWindow, out XWindowAttributes attrs) == 0)
+            {
+                ShowError("Failed to get window attributes");
+                return;
+            }
+
+            if (attrs.depth != 32 || !IsArgbVisual(_display, attrs.visual))
+            {
+                ShowError("Unity window does not have a 32-bit ARGB visual. Skipping shaping.");
+                return;
+            }
+
+            if (!IsCompositionSupported())
+            {
+                ShowError("No compositor found.");
+                return;
+            }
+
+            XSelectInput(_display, _unityWindow, StructureNotifyMask);
+
+            if (!XDamageQueryExtension(_display, out damageEventBase, out _))
+            {
+                ShowError("XDamage extension not available");
+                return;
+            }
+
+            damage = XDamageCreate(_display, _unityWindow, XDamageReportNonEmpty);
+            if (damage == IntPtr.Zero)
+            {
+                ShowError("Failed to create damage object");
+                return;
+            }
+
+            IntPtr fullMask = CreateFullMask(_display, attrs.width, attrs.height);
+            XShapeCombineMask(_display, _unityWindow, ShapeBounding, 0, 0, fullMask, ShapeSet);
+            XFreePixmap(_display, fullMask);
+
+            UpdateInputMask(attrs.width, attrs.height);
+        }
+
+        private bool IsArgbVisual(IntPtr display, IntPtr visual)
+        {
+            IntPtr formatPtr = XRenderFindVisualFormat(display, visual);
+            if (formatPtr == IntPtr.Zero) return false;
+
+            XRenderPictFormat format = Marshal.PtrToStructure<XRenderPictFormat>(formatPtr);
+            return format.type == PictTypeDirect && format.direct.alphaMask != 0;
+        }
+
+        private IntPtr CreateFullMask(IntPtr display, int width, int height)
+        {
+            IntPtr mask = XCreatePixmap(display, XDefaultRootWindow(display), (uint)width, (uint)height, 1);
+
+            XGCValues gcValues = default;
+            gcValues.foreground = 1;
+            IntPtr gc = XCreateGC(display, mask, GCForeground, ref gcValues);
+
+            XFillRectangle(display, mask, gc, 0, 0, (uint)width, (uint)height);
+
+            XFreeGC(display, gc);
+            return mask;
+        }
+
+        private IntPtr CreateShapeMask(IntPtr display, Image image)
+        {
+            IntPtr mask = XCreatePixmap(display, XDefaultRootWindow(display), (uint)image.width, (uint)image.height, 1);
+
+            XGCValues gcValues = default;
+            gcValues.foreground = 0;
+            gcValues.background = 0;
+            IntPtr gc = XCreateGC(display, mask, GCForeground | GCBackground, ref gcValues);
+
+            XFillRectangle(display, mask, gc, 0, 0, (uint)image.width, (uint)image.height);
+
+            XSetForeground(display, gc, 1);
+            
+            for (int y = 0; y < image.height; y++)
+            {
+                for (int x = 0; x < image.width; x++)
+                {
+                    int idx = (y * image.width + x) * 4;
+                    if (image.data[idx + 3] > 0)
+                    {
+                        XDrawPoint(display, mask, gc, x, y);
+                    }
+                }
+            }
+
+            XFreeGC(display, gc);
+            return mask;
+        }
+
+        private void UpdateInputMask(int width, int height)
+        {
+            if (isDragging || !running)
+                return;
+            IntPtr xImagePtr = XGetImage(_display, _unityWindow, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
+            if (xImagePtr == IntPtr.Zero)
+            {
+                ShowError("Failed to get image from window");
+                return;
+            }
+
+            Image image = GetImageData(xImagePtr, width, height);
+            XDestroyImage(xImagePtr);
+
+            IntPtr mask = CreateShapeMask(_display, image);
+            XShapeCombineMask(_display, _unityWindow, ShapeInput, 0, 0, mask, ShapeSet);
+            XFreePixmap(_display, mask);
+        }
+
+        private Image GetImageData(IntPtr xImagePtr, int width, int height)
+        {
+            Image image;
+            image.width = width;
+            image.height = height;
+            image.data = new byte[width * height * 4];
+
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    ulong pixel = XGetPixel(xImagePtr, x, y);
+                    int idx = (y * width + x) * 4;
+                    image.data[idx + 0] = (byte)((pixel >> 16) & 0xFF); // R
+                    image.data[idx + 1] = (byte)((pixel >> 8) & 0xFF); // G
+                    image.data[idx + 2] = (byte)(pixel & 0xFF); // B
+                    image.data[idx + 3] = (byte)((pixel >> 24) & 0xFF); // A
+                }
+            }
+
+            return image;
+        }
+
+        private async void ApplyShaping()
+        {
+            try
+            {
+                if (!transparentInputEnabled || !running || _display == IntPtr.Zero || damage == IntPtr.Zero) return;
+
+                await Task.Run(() =>
+                {
+                    while (running && !_shapingCts.Token.IsCancellationRequested)
+                    {
+                        if (_display == IntPtr.Zero) break;
+                        if (XPending(_display) <= 0) 
+                        {
+                            _shapingCts.Token.ThrowIfCancellationRequested(); // Yield to check cancellation
+                            continue;
+                        }
+                        XEvent ev = default;
+                        if (XNextEvent(_display, ref ev) != 0) continue; // Skip invalid events
+
+                        // Add null-display check before processing
+                        if (_display == IntPtr.Zero) break;
+
+                        switch (ev.type)
+                        {
+                            case ConfigureNotify:
+                            {
+                                XConfigureEvent ce = ev.configureEvent;
+                                if (ce.window == _unityWindow)
+                                {
+                                    int width = ce.width;
+                                    int height = ce.height;
+
+                                    IntPtr fullMask = CreateFullMask(_display, width, height);
+                                    XShapeCombineMask(_display, _unityWindow, ShapeBounding, 0, 0, fullMask, ShapeSet);
+                                    XFreePixmap(_display, fullMask);
+
+                                    UpdateInputMask(width, height);
+                                    QueryMonitors();
+                                }
+                                break;
+                            }
+                            case DestroyNotify:
+                            {
+                                XDestroyWindowEvent de = ev.destroyWindowEvent;
+                                if (de.window == _unityWindow)
+                                {
+                                    running = false;
+                                }
+                                break;
+                            }
+                            default:
+                            {
+                                if (ev.type == damageEventBase)
+                                {
+                                    XDamageNotifyEvent de = ev.damageNotifyEvent;
+                                    if (de.drawable == _unityWindow)
+                                    {
+                                        XDamageSubtract(_display, de.damage, IntPtr.Zero, IntPtr.Zero);
+
+                                        // Double-check display before further ops
+                                        if (_display == IntPtr.Zero) break;
+
+                                        XGetWindowAttributes(_display, _unityWindow, out XWindowAttributes attrs);
+                                        // Check again before update
+                                        if (_display != IntPtr.Zero)
+                                        {
+                                            UpdateInputMask(attrs.width, attrs.height);
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        _shapingCts.Token.ThrowIfCancellationRequested(); // Check after each iteration
+                    }
+                }, _shapingCts.Token);
+            }
+            catch (OperationCanceledException) { /* Expected on cancel */ }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+            }
+        }
+        #endregion
+        
+        #region API
+
+        private IntPtr _display;
+        private IntPtr _rootWindow;
+        private IntPtr _unityWindow;
+        private List<Rect> _monitors = new();
+        private IntPtr _netWmState, _netWmStateFullscreen, _netWmStateMaxHorz, _netWmStateMaxVert;
+        private IntPtr _netWmWindowType, _netWmWindowTypeDesktop, _netWmWindowTypeDock;
+        private IntPtr _shapeEventBase, _shapeErrorBase;
+
+        // X11 Constants
+        private const int XaCardinal = 6;
+        private const int XaAtom = 4;
+        private const int IsViewable = 2;
+        private const int XaWindow = 33;
+        
+        private bool transparentInputEnabled = false;
+        private int damageEventBase;
+        private IntPtr damage = IntPtr.Zero;
+        private bool running = true;
+        private CancellationTokenSource _shapingCts = new();
+        
+        private const long MWM_HINTS_FLAGS = 1L << 1; // Use decorations
+        private const long MWM_DECORATIONS_NONE = 0; // No decorations
+        private const int PropModeReplace = 0;
+
+        private const int ClientMessage = 33;
+        private const long StructureNotifyMask = (1L << 17);
+        private const long SubstructureRedirectMask = 0x00080000;
+        private const long SubstructureNotifyMask = 0x00040000;
+        private const int ConfigureNotify = 22;
+        private const int DestroyNotify = 17;
+        private const int ShapeBounding = 0;
+        private const int ShapeInput = 2;
+        private const int ShapeSet = 0;
+        private const int PictTypeDirect = 1;
+        private const int XDamageReportNonEmpty = 3;
+        private const ulong GCForeground = (1UL << 2);
+        private const ulong GCBackground = (1UL << 3);
+        private const int ZPixmap = 2;
+        private const ulong AllPlanes = 0xFFFFFFFFFFFFFFFFUL; // For 64-bit
+
+        public const string LibX11 = "libX11.so.6";
+        private const string LibXExt = "libXext.so.6";
+        public const string LibXRender = "libXrender.so.1";
+        private const string LibXDamage = "libXdamage.so.1";
+        private const string LibXRandR = "libXrandr.so.2";
+
+        // X11 Event structures
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XClientMessageEvent
+        {
+            public int type;
+            public IntPtr serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr window;
+            public IntPtr message_type;
+            public int format;
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
+            public IntPtr[] data;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct XWindowAttributes
+        {
+            public int x, y;
+            public int width, height;
+            public int border_width;
+            public int depth;
+            public IntPtr visual;
+            public IntPtr root;
+            public int c_class;
+            public int bit_gravity;
+            public int win_gravity;
+            public int backing_store;
+            public ulong backing_planes;
+            public ulong backing_pixel;
+            public bool save_under;
+            public IntPtr colormap;
+            public bool map_installed;
+            public int map_state;
+            public long all_event_masks;
+            public long your_event_mask;
+            public long do_not_propagate_mask;
+            public bool override_redirect;
+            public IntPtr screen;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XClassHint
+        {
+            public IntPtr res_name;
+            public IntPtr res_class;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XTextProperty
+        {
+            public IntPtr value;
+            public IntPtr encoding;
+            public int format;
+            public ulong nItems;
+        }
+        
+        [StructLayout(LayoutKind.Explicit)]
+        private struct XEvent
+        {
+            [FieldOffset(0)] public int type;
+            [FieldOffset(0)] public XAnyEvent anyEvent;
+            [FieldOffset(0)] public XConfigureEvent configureEvent;
+            [FieldOffset(0)] public XDestroyWindowEvent destroyWindowEvent;
+            [FieldOffset(0)] public XDamageNotifyEvent damageNotifyEvent;
+            [FieldOffset(0)] public XClientMessageEvent clientMessageEvent;
+            [FieldOffset(0)] public XSelectionEvent selectionEvent;
+        }
+        
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XSelectionEvent
+        {
+            public int type;
+            public ulong serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr requestor;
+            public IntPtr selection;
+            public IntPtr target;
+            public IntPtr property;
+            public ulong time;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XAnyEvent
+        {
+            public int type;
+            public ulong serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr window;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XConfigureEvent
+        {
+            public int type;
+            public ulong serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr event_window;
+            public IntPtr window;
+            public int x, y;
+            public int width, height;
+            public int border_width;
+            public IntPtr above;
+            public bool override_redirect;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XDestroyWindowEvent
+        {
+            public int type;
+            public ulong serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr event_window;
+            public IntPtr window;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XDamageNotifyEvent
+        {
+            public int type;
+            public ulong serial;
+            public bool send_event;
+            public IntPtr display;
+            public IntPtr drawable;
+            public IntPtr damage;
+            public int level;
+            public bool more;
+            public ulong timestamp;
+            public XRectangle area;
+            public XRectangle geometry;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XRectangle
+        {
+            public short x, y;
+            public ushort width, height;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct XRenderPictFormat
+        {
+            public IntPtr id;
+            public int type;
+            public int depth;
+            public XRenderDirectFormat direct;
+            public IntPtr colormap;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct XRenderDirectFormat
+        {
+            public short red;
+            public short redMask;
+            public short green;
+            public short greenMask;
+            public short blue;
+            public short blueMask;
+            public short alpha;
+            public short alphaMask;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XGCValues
+        {
+            public int function;
+            public ulong plane_mask;
+            public ulong foreground;
+            public ulong background;
+            public int line_width;
+            public int line_style;
+            public int cap_style;
+            public int join_style;
+            public int fill_style;
+            public int fill_rule;
+            public int arc_mode;
+            public IntPtr tile;
+            public IntPtr stipple;
+            public int ts_x_origin;
+            public int ts_y_origin;
+            public IntPtr font;
+            public int subwindow_mode;
+            public bool graphics_exposures;
+            public int clip_x_origin;
+            public int clip_y_origin;
+            public IntPtr clip_mask;
+            public int dash_offset;
+            public char dashes;
+        }
+
+        private struct Image
+        {
+            public byte[] data;
+            public int width, height;
+        }
+        
+        [Serializable]
+        public struct RectF
+        {
+            public float x1, y1, x2, y2;
+        }
+        
+        public struct UnionAreaCalculator
+        {
+            [BurstCompile(CompileSynchronously = true)]
+            public static float Compute(NativeArray<RectF> rects)
+            {
+                int n = rects.Length;
+                if (n == 0) return 0f;
+                float unionArea = 0f;
+                int maxMask = 1 << n;
+                for (int mask = 1; mask < maxMask; mask++)
+                {
+                    float ix1 = float.MinValue;
+                    float iy1 = float.MinValue;
+                    float ix2 = float.MaxValue;
+                    float iy2 = float.MaxValue;
+                    int parity = 0;
+                    for (int j = 0; j < n; j++)
+                    {
+                        if ((mask & (1 << j)) != 0)
+                        {
+                            RectF r = rects[j];
+                            ix1 = Math.Max(ix1, r.x1);
+                            iy1 = Math.Max(iy1, r.y1);
+                            ix2 = Math.Min(ix2, r.x2);
+                            iy2 = Math.Min(iy2, r.y2);
+                            parity++;
+                        }
+                    }
+                    float w = Math.Max(0f, ix2 - ix1);
+                    float h = Math.Max(0f, iy2 - iy1);
+                    if (w > 0f && h > 0f)
+                    {
+                        unionArea += (parity % 2 == 1 ? 1f : -1f) * w * h;
+                    }
+                }
+                return unionArea;
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XMotifWmHints
+        {
+            public IntPtr flags;
+            public IntPtr functions;
+            public IntPtr decorations;
+            public IntPtr input_mode;
+            public IntPtr status;
+        }
+        
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XRRScreenSize
+        {
+            public int width;
+            public int height;
+            public int mwidth;
+            public int mheight;
+        }
+        
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XRRScreenResources
+        {
+            public IntPtr timestamp;
+            public IntPtr configTimestamp;
+            public int ncrtc;
+            public IntPtr crtcs;        // IntPtr* (array of XID)
+            public int noutput;
+            public IntPtr outputs;      // IntPtr* (array of XID)
+            public int nmode;
+            public IntPtr modes;        // pointer to array of XRRScreenModeInfo
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XRROutputInfo
+        {
+            public IntPtr timestamp;
+            public IntPtr crtc;         // XID of current CRTC, or None
+            public IntPtr name;         // pointer to null-terminated string
+            public int nameLen;
+            public long mm_width;       // physical width in millimeters
+            public long mm_height;      // physical height in millimeters
+            public Connection connection; // 0 = connected, 1 = disconnected, 2 = unknown
+            public byte subpixel_order;
+            public int ncrtc;
+            public IntPtr crtcs;        // array of possible CRTCs
+            public int nclone;
+            public IntPtr clones;
+            public int nmode;
+            public int npreferred;
+            public IntPtr modes;        // array of mode XIDs
+        }
+        
+        private enum Connection : byte
+        {
+            Connected = 0,
+            Disconnected = 1,
+            Unknown = 2
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct XRRCrtcInfo
+        {
+            public IntPtr timestamp;
+            public int x, y;            // absolute position of CRTC
+            public uint width, height;  // size in pixels
+            public int mode;            // current mode XID
+            public Rotation rotation;   // current rotation
+            public int noutput;
+            public IntPtr outputs;      // array of output XIDs currently driven
+            public int npossible;
+            public IntPtr possible;     // array of possible outputs
+        }
+        
+        [Flags]
+        private enum Rotation : ushort
+        {
+            Rotate0   = 1 << 0,
+            Rotate90  = 1 << 1,
+            Rotate180 = 1 << 2,
+            Rotate270 = 1 << 3,
+            ReflectX  = 1 << 4,
+            ReflectY  = 1 << 5
+        }
+        
+        // X11 Library imports
+        [DllImport(LibX11)]
+        private static extern IntPtr XOpenDisplay(string displayName);
+
+        [DllImport(LibX11)]
+        private static extern void XCloseDisplay(IntPtr display);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XDefaultRootWindow(IntPtr display);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XInternAtom(IntPtr display, string atomName, bool onlyIfExists);
+
+        [DllImport(LibX11)]
+        private static extern int XGetWindowProperty(IntPtr display, IntPtr window, IntPtr property,
+            long longOffset, long longLength, bool delete, IntPtr reqType,
+            out IntPtr actualTypeReturn, out int actualFormatReturn,
+            out ulong nItemsReturn, out ulong bytesAfterReturn, out IntPtr propReturn);
+
+        [DllImport(LibX11)]
+        private static extern int XGetGeometry(IntPtr display, IntPtr w, out IntPtr rootReturn, out int x, out int y,
+            out int width, out int height, out int borderWidth, out uint depth);
+
+        public int GetGeometry(out IntPtr rootReturn, out int x, out int y, out int width, out int height,
+            out int borderWidth, out uint depth) => XGetGeometry(_display, _unityWindow, out rootReturn, out x, out y,
+            out width, out height, out borderWidth, out depth);
+
+        [DllImport(LibX11)]
+        private static extern int XFree(IntPtr data);
+
+        [DllImport(LibX11)]
+        private static extern int XQueryTree(IntPtr display, IntPtr window,
+            out IntPtr rootReturn, out IntPtr parentReturn,
+            out IntPtr childrenReturn, out uint nChildrenReturn);
+
+        [DllImport(LibX11)]
+        private static extern int XGetWindowAttributes(IntPtr display, IntPtr window, out XWindowAttributes attributes);
+
+        [DllImport(LibX11)]
+        private static extern int XMoveWindow(IntPtr display, IntPtr window, int x, int y);
+
+        [DllImport(LibX11)]
+        private static extern int XMapWindow(IntPtr display, IntPtr window);
+
+        [DllImport(LibX11)]
+        private static extern int XResizeWindow(IntPtr display, IntPtr window, int width, int height);
+
+        [DllImport(LibX11)]
+        private static extern bool XQueryPointer(IntPtr display, IntPtr window, ref IntPtr windowReturn,
+            ref IntPtr childReturn,
+            ref int rootX, ref int rootY, ref int winX, ref int winY, ref uint mask);
+
+        [DllImport(LibX11)]
+        private static extern int XFlush(IntPtr display);
+        
+        [DllImport(LibX11)]
+        private static extern int XScreenCount(IntPtr display);
+
+        [DllImport(LibX11)]
+        private static extern int XGetSelectionOwner(IntPtr display, IntPtr atom);
+
+        [DllImport(LibX11)]
+        private static extern int XSendEvent(IntPtr display, IntPtr window, bool propagate,
+            long eventMask, ref XClientMessageEvent eventSend);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XRootWindow(IntPtr display, int screenNumber);
+
+        [DllImport(LibX11)]
+        private static extern bool XTranslateCoordinates(IntPtr display, IntPtr srcW, IntPtr destW,
+            int srcX, int srcY, out int destX, out int destY, out IntPtr child);
+
+        [DllImport(LibX11)]
+        private static extern int XGetClassHint(IntPtr display, IntPtr w, out XClassHint classHints);
+
+        [DllImport(LibX11)]
+        private static extern int XDisplayWidth(IntPtr display, int screen);
+        
+        public int DisplayWidth(IntPtr display, int screen) => XDisplayWidth(display, screen);
+
+        [DllImport(LibX11)]
+        private static extern int XDisplayHeight(IntPtr display, int screen);
+        
+        public int DisplayHeight(IntPtr display, int screen) => XDisplayHeight(display, screen);
+
+        [DllImport(LibX11)]
+        private static extern void XSync(IntPtr display, bool discard);
+
+        [DllImport(LibX11)]
+        private static extern int XChangeProperty(IntPtr display, IntPtr window, IntPtr property, IntPtr type,
+            int format, int mode, ref XMotifWmHints data, int nItems);
+        
+        [DllImport(LibX11)]
+        private static extern int XChangeProperty(IntPtr display, IntPtr window, IntPtr property, IntPtr type,
+            int format, int mode, ref int data, int nItems);
+
+        [DllImport(LibX11)]
+        private static extern int XSelectInput(IntPtr display, IntPtr window, long eventMask);
+
+        [DllImport(LibXDamage)]
+        private static extern bool XDamageQueryExtension(IntPtr display, out int eventBase, out int errorBase);
+
+        [DllImport(LibXDamage)]
+        private static extern IntPtr XDamageCreate(IntPtr display, IntPtr drawable, int level);
+
+        [DllImport(LibXDamage)]
+        private static extern void XDamageDestroy(IntPtr display, IntPtr damage);
+
+        [DllImport(LibXDamage)]
+        private static extern void XDamageSubtract(IntPtr display, IntPtr damage, IntPtr repair, IntPtr parts);
+
+        [DllImport(LibXExt)]
+        private static extern void XShapeCombineMask(IntPtr display, IntPtr window, int destKind, int xOff, int yOff,
+            IntPtr mask, int op);
+
+        [DllImport(LibXRender)]
+        private static extern IntPtr XRenderFindVisualFormat(IntPtr display, IntPtr visual);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XCreatePixmap(IntPtr display, IntPtr drawable, uint width, uint height,
+            uint depth);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XCreateGC(IntPtr display, IntPtr drawable, ulong valueMask, ref XGCValues values);
+
+        [DllImport(LibX11)]
+        private static extern int XSetForeground(IntPtr display, IntPtr gc, ulong foreground);
+
+        [DllImport(LibX11)]
+        private static extern int XFillRectangle(IntPtr display, IntPtr drawable, IntPtr gc, int x, int y, uint width,
+            uint height);
+
+        [DllImport(LibX11)]
+        private static extern int XDrawPoint(IntPtr display, IntPtr drawable, IntPtr gc, int x, int y);
+
+        [DllImport(LibX11)]
+        private static extern int XFreeGC(IntPtr display, IntPtr gc);
+
+        [DllImport(LibX11)]
+        private static extern int XFreePixmap(IntPtr display, IntPtr pixmap);
+
+        [DllImport(LibX11)]
+        private static extern IntPtr XGetImage(IntPtr display, IntPtr drawable, int x, int y, uint width, uint height,
+            ulong plane_mask, int format);
+
+        [DllImport(LibX11)]
+        private static extern int XDestroyImage(IntPtr xImage);
+
+        [DllImport(LibX11)]
+        private static extern ulong XGetPixel(IntPtr xImage, int x, int y);
+
+        [DllImport(LibX11)]
+        private static extern int XNextEvent(IntPtr display, ref XEvent ev);
+
+        [DllImport(LibX11)]
+        private static extern int XPending(IntPtr display);
+        
+        [DllImport(LibXRandR)]
+        private static extern int XRRQueryExtension(IntPtr display, out IntPtr event_base, out IntPtr error_base);
+
+        [DllImport(LibXRandR)]
+        private static extern int XRRQueryVersion(IntPtr display, out int major, out int minor);
+
+        [DllImport(LibXRandR)]
+        private static extern XRRScreenResources XRRGetScreenResources(IntPtr display, IntPtr window);
+
+        [DllImport(LibXRandR)]
+        private static extern void XRRFreeScreenResources(XRRScreenResources resources);
+
+        [DllImport(LibXRandR)]
+        private static extern XRROutputInfo XRRGetOutputInfo(IntPtr display, XRRScreenResources resources, IntPtr output);
+
+        [DllImport(LibXRandR)]
+        private static extern void XRRFreeOutputInfo(XRROutputInfo outputInfo);
+
+        [DllImport(LibXRandR)]
+        private static extern XRRCrtcInfo XRRGetCrtcInfo(IntPtr display, XRRScreenResources resources, IntPtr crtc);
+
+        [DllImport(LibXRandR)]
+        private static extern void XRRFreeCrtcInfo(XRRCrtcInfo crtcInfo);
+
+        [DllImport(LibX11)]
+        private static extern int XShapeQueryExtension(IntPtr display, out IntPtr event_base, out IntPtr error_base);
+        
+        [DllImport(LibXExt)]
+        private static extern bool XShapeQueryExtents(IntPtr display, IntPtr window, out bool bounding, out int x, out int y, out uint width, out uint height);
+        
+        [DllImport(LibXExt)]
+        private static extern bool XShapeGetRectangles(IntPtr display, IntPtr window, int dest_kind, out int x_offset, out int y_offset, out IntPtr rectangles, out int n_rects);
+        
+        [DllImport(LibX11)]
+        private static extern int XGetAtomName(IntPtr display, IntPtr atom, byte[] name, int size);
+
+        #endregion
+    }
+}

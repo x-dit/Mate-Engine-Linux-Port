@@ -1,0 +1,47 @@
+name: Report Bug
+description: Report something that's broken or not working right.
+title: "[BUG] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: |
+        Describe the issue in detail, including your Linux and hardware information.
+
+        ⚠️ Please report only **one** bug per issue. Submitting multiple bugs will make the report invalid and it may be ignored or deleted.
+      placeholder: "It crashed when I clicked X..."
+    validations:
+      required: true
+      
+  - type: checkboxes
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Confirm you've set up your Linux environment correctly.
+      options:
+        - label: I already installed all of the libraries listed out in README.md, including `libayatana-appindicator3-1`
+        - label: I launch MateEngine with `launch.sh` script.
+        - label: If I use KDE, I will turn off "Allow applications to block compositing" in Compositor entry of KDE System Settings
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: How can we replicate the bug?
+      placeholder: "Step-by-step instructions to trigger the issue"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: read_note
+    attributes:
+      label: Confirmation
+      description: Confirm you've read the guideline above.
+      options:
+        - label: I confirm this report includes **only one** bug.
+    validations:
+      required: true
