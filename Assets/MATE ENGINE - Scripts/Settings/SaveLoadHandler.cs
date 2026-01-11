@@ -9,6 +9,8 @@ public class SaveLoadHandler : MonoBehaviour
     public static SaveLoadHandler Instance { get; private set; }
 
     public SettingsData data;
+    
+    public bool safeMode;
 
     // Multi-Instance Variablen
     private static string fileName = "settings.json";
@@ -40,6 +42,9 @@ public class SaveLoadHandler : MonoBehaviour
 
             if (args[i].Equals("--datadir", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
                 customDataDir = args[i + 1].Trim('"');
+            
+            if (args[i].Equals("--safemode"))
+                safeMode = true;
         }
 
         LoadFromDisk();
@@ -64,6 +69,7 @@ public class SaveLoadHandler : MonoBehaviour
     // Speichern
     public void SaveToDisk()
     {
+        if (safeMode) return;
         try
         {
             string dir = Path.GetDirectoryName(FilePath);
@@ -83,7 +89,7 @@ public class SaveLoadHandler : MonoBehaviour
     // Laden
     public void LoadFromDisk()
     {
-        if (File.Exists(FilePath))
+        if (File.Exists(FilePath) && !safeMode)
         {
             try
             {
@@ -97,6 +103,7 @@ public class SaveLoadHandler : MonoBehaviour
         }
         else
         {
+            if (safeMode) Debug.Log("[SaveLoadHandler] Entering Safe Mode...");
             data = new SettingsData();
         }
         MigrateAfterLoad();

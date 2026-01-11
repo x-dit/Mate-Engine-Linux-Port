@@ -53,7 +53,6 @@ public static class EarlyEnvSet
         #if UNITY_EDITOR
         return;
         #endif
-        setenv("GDK_BACKEND", "x11", 0);
         setenv("NO_AT_BRIDGE", "1", 0);
         string[] argc = { };
         if (!Gtk.Application.InitCheck(string.Empty, ref argc))

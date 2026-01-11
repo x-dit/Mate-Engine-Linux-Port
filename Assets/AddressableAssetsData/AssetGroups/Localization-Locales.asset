@@ -76,7 +76,7 @@ MonoBehaviour:
     - Locale
     FlaggedDuringContentUpdateRestriction: 0
   - m_GUID: bf3862ce40e8b004188bca27b31c0171
-    m_Address: Chinese (Simplified) (zh)
+    m_Address: Chinese (Simplified) (zh-Hans)
     m_ReadOnly: 1
     m_SerializedLabels:
     - Locale

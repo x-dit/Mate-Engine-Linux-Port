@@ -1382,6 +1382,10 @@ MonoBehaviour:
     m_Localized: Dodaj minutnik
     m_Metadata:
       m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: Ustawienia specyficzne dla Linux
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []

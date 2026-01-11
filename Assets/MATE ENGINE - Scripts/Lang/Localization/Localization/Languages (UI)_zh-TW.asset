@@ -654,7 +654,7 @@ MonoBehaviour:
     m_Metadata:
       m_Items: []
   - m_Id: 71028682261569542
-    m_Localized: "\u4E2D\u6587"
+    m_Localized: "\u7E41\u9AD4\u4E2D\u6587\uFF08\u53F0\u7063\uFF09"
     m_Metadata:
       m_Items: []
   - m_Id: 71028682261569543
@@ -1267,6 +1267,10 @@ MonoBehaviour:
       m_Items: []
   - m_Id: 78943700919558144
     m_Localized: "\u65B0\u589E\u8A08\u6642\u5668"
+    m_Metadata:
+      m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: "Linux \u7279\u5B9A\u8A2D\u5B9A"
     m_Metadata:
       m_Items: []
   references:

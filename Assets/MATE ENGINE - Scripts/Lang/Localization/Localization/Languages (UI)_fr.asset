@@ -1453,6 +1453,10 @@ MonoBehaviour:
     m_Localized: Ajouter un Minuteur
     m_Metadata:
       m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: "Param\xE8tres sp\xE9cifiques \xE0 Linux"
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []

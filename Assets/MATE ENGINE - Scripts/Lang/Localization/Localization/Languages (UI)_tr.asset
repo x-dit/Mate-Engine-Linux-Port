@@ -1412,6 +1412,10 @@ MonoBehaviour:
     m_Localized: "Zamanlay\u0131c\u0131 Ekle"
     m_Metadata:
       m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: "Linux'e \xD6zg\xFC Ayarlar"
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []

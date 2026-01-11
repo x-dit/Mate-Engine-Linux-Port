@@ -1253,6 +1253,10 @@ MonoBehaviour:
     m_Localized: "\u30BF\u30A4\u30DE\u30FC\u3092\u8FFD\u52A0"
     m_Metadata:
       m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: "Linux \u56FA\u6709\u306E\u8A2D\u5B9A"
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []

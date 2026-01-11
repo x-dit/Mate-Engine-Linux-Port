@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Linq;
-using System.Text;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using Debug = UnityEngine.Debug;
@@ -145,7 +144,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
 
         XSetErrorHandler(ShowError);
-        
+
         _rootWindow = XDefaultRootWindow(_display);
         _netWmState = XInternAtom(_display, "_NET_WM_STATE", false);
         _netWmStateFullscreen = XInternAtom(_display, "_NET_WM_STATE_FULLSCREEN", false);
@@ -153,7 +152,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _netWmStateMaxVert = XInternAtom(_display, "_NET_WM_STATE_MAXIMIZED_VERT", false);
         _netWmWindowType = XInternAtom(_display, "_NET_WM_WINDOW_TYPE", false);
     }
-
+        
     private int ShowError(IntPtr display, IntPtr e)
     {
         ShowError(LookupError(e) ?? "???");
@@ -167,15 +166,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         XErrorEvent error = Marshal.PtrToStructure<XErrorEvent>(errorEvent);
         if (_display == IntPtr.Zero) return "Display not initialized";
 
-        const int BUFFER_SIZE = 256;
-        var buffer = new byte[BUFFER_SIZE];
+        var buffer = new byte[256];
 
-        IntPtr result = XGetErrorText(_display, error.error_code, out _, BUFFER_SIZE);
+        XGetErrorText(_display, error.error_code, buffer, buffer.Length);
 
-        if (result == IntPtr.Zero)
-            return $"Unknown error code: {error.error_code} (XGetErrorText failed)";
-
-        return Encoding.ASCII.GetString(buffer).TrimEnd('\0');;
+        return System.Text.Encoding.ASCII.GetString(buffer).TrimEnd('\0');;
     }
 
     private void Dispose()
@@ -191,25 +186,15 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             SetTopmost(false);
 #endif
 #if !UNITY_EDITOR
-             if (damage != IntPtr.Zero)
-             {
+            if (damage != IntPtr.Zero)
+            {
                 XDamageDestroy(_display, damage);
                 damage = IntPtr.Zero;
-             }
-#endif
-            if (useShm && shmImage != IntPtr.Zero)
-            {
-                XShmDetach(_display, ref shminfo);
-                XDestroyImage(shmImage);
-                shmdt(shminfo.shmaddr);
-                shmctl(shminfo.shmid, IPC_RMID, IntPtr.Zero);
-                shmImage = IntPtr.Zero;
             }
-
+#endif
             XSync(_display, false);
             XCloseDisplay(_display);
             _display = IntPtr.Zero;
-            XFreeThreads();
         }
     }
     #endregion
@@ -921,85 +906,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return;
         }
 
-        // Check for XShm support
-        useShm = XShmQueryExtension(_display, out _, out _);
-        if (useShm)
-        {
-            XShmQueryVersion(_display, out _, out _, out _);
-            CreateShmImage(attrs.width, attrs.height); // Initial creation
-        }
-        else
-        {
-            ShowError("XShm extension not available; falling back to XGetImage.");
-        }
-
         var fullMask = CreateFullMask(_display, attrs.width, attrs.height);
         XShapeCombineMask(_display, _unityWindow, ShapeBounding, 0, 0, fullMask, ShapeSet);
         XFreePixmap(_display, fullMask);
 
         UpdateInputMask(attrs.width, attrs.height);
-    }
-    
-    private void CreateShmImage(int width, int height)
-    {
-        if (shmImage != IntPtr.Zero)
-        {
-            XShmDetach(_display, ref shminfo);
-            XDestroyImage(shmImage);
-            shmdt(shminfo.shmaddr);
-            shmctl(shminfo.shmid, IPC_RMID, IntPtr.Zero);
-            shmImage = IntPtr.Zero;
-        }
-
-        if (!useShm) return;
-
-        XGetWindowAttributes(_display, _unityWindow, out var attrs);
-        IntPtr visual = attrs.visual;
-        uint depth = (uint)attrs.depth;
-
-        shminfo = new XShmSegmentInfo();
-        shmImage = XShmCreateImage(_display, visual, depth, ZPixmap, IntPtr.Zero, ref shminfo, (uint)width, (uint)height);
-        if (shmImage == IntPtr.Zero)
-        {
-            ShowError("Failed to create XShm image; falling back to XGetImage.");
-            useShm = false;
-            return;
-        }
-
-        XImage ximg = Marshal.PtrToStructure<XImage>(shmImage);
-        int size = ximg.bytes_per_line * ximg.height;
-
-        shminfo.shmid = shmget(IPC_PRIVATE, size, IPC_CREAT | 511); // 0777 octal = 511 decimal
-        if (shminfo.shmid < 0)
-        {
-            ShowError("shmget failed; falling back to XGetImage.");
-            XDestroyImage(shmImage);
-            useShm = false;
-            return;
-        }
-
-        shminfo.shmaddr = shmat(shminfo.shmid, IntPtr.Zero, 0);
-        if (shminfo.shmaddr == (IntPtr)(-1))
-        {
-            ShowError("shmat failed; falling back to XGetImage.");
-            shmctl(shminfo.shmid, IPC_RMID, IntPtr.Zero);
-            XDestroyImage(shmImage);
-            useShm = false;
-            return;
-        }
-
-        ximg.data = shminfo.shmaddr;
-        Marshal.StructureToPtr(ximg, shmImage, false);
-
-        shminfo.readOnly = false;
-        if (!XShmAttach(_display, ref shminfo))
-        {
-            ShowError("XShmAttach failed; falling back to XGetImage.");
-            shmdt(shminfo.shmaddr);
-            shmctl(shminfo.shmid, IPC_RMID, IntPtr.Zero);
-            XDestroyImage(shmImage);
-            useShm = false;
-        }
     }
 
     private bool IsArgbVisual(IntPtr display, IntPtr visual)
@@ -1058,62 +969,49 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (isDragging || !running)
             return;
-
+        
         // Throttle: Only proceed if enough time has passed
         if (_shapingStopwatch.IsRunning && _shapingStopwatch.ElapsedMilliseconds < ShapingThrottleMs)
             return;
 
         _shapingStopwatch.Restart();
 
-        Image image = new Image { Width = width, Height = height, Data = new byte[width * height * 4] };
-
-        if (useShm && shmImage != IntPtr.Zero)
+        var xImagePtr = XGetImage(_display, _unityWindow, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
+        if (xImagePtr == IntPtr.Zero)
         {
-            if (!XShmGetImage(_display, _unityWindow, shmImage, 0, 0, AllPlanes))
-            {
-                ShowError("XShmGetImage failed; falling back to XGetImage.");
-                useShm = false;
-                return;
-            }
-
-            XImage ximg = Marshal.PtrToStructure<XImage>(shmImage);
-            byte[] rawData = new byte[ximg.bytes_per_line * ximg.height];
-            Marshal.Copy(ximg.data, rawData, 0, rawData.Length);
-
-            // Copy without padding (rawData may have stride > width*4)
-            for (int y = 0; y < height; y++)
-            {
-                Buffer.BlockCopy(rawData, y * ximg.bytes_per_line, image.Data, y * width * 4, width * 4);
-            }
+            ShowError("Failed to get image from window");
+            return;
         }
-        else
-        {
-            var xImagePtr = XGetImage(_display, _unityWindow, 0, 0, (uint)width, (uint)height, AllPlanes, ZPixmap);
-            if (xImagePtr == IntPtr.Zero)
-            {
-                ShowError("Failed to get image from window");
-                return;
-            }
 
-            // Old slow loop (using XGetPixel)
-            for (var y = 0; y < height; y++)
-            {
-                for (var x = 0; x < width; x++)
-                {
-                    var pixel = XGetPixel(xImagePtr, x, y);
-                    var idx = (y * width + x) * 4;
-                    image.Data[idx + 0] = (byte)((pixel >> 16) & 0xFF); // R
-                    image.Data[idx + 1] = (byte)((pixel >> 8) & 0xFF); // G
-                    image.Data[idx + 2] = (byte)(pixel & 0xFF); // B
-                    image.Data[idx + 3] = (byte)((pixel >> 24) & 0xFF); // A
-                }
-            }
-            XDestroyImage(xImagePtr);
-        }
+        var image = GetImageData(xImagePtr, width, height);
+        XDestroyImage(xImagePtr);
 
         var mask = CreateShapeMask(_display, image);
         XShapeCombineMask(_display, _unityWindow, ShapeInput, 0, 0, mask, ShapeSet);
         XFreePixmap(_display, mask);
+    }
+
+    private Image GetImageData(IntPtr xImagePtr, int width, int height)
+    {
+        Image image;
+        image.Width = width;
+        image.Height = height;
+        image.Data = new byte[width * height * 4];
+
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var pixel = XGetPixel(xImagePtr, x, y);
+                var idx = (y * width + x) * 4;
+                image.Data[idx + 0] = (byte)((pixel >> 16) & 0xFF); // R
+                image.Data[idx + 1] = (byte)((pixel >> 8) & 0xFF); // G
+                image.Data[idx + 2] = (byte)(pixel & 0xFF); // B
+                image.Data[idx + 3] = (byte)((pixel >> 24) & 0xFF); // A
+            }
+        }
+
+        return image;
     }
 
     private void ApplyShaping()
@@ -1147,11 +1045,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                                 var fullMask = CreateFullMask(_display, width, height);
                                 XShapeCombineMask(_display, _unityWindow, ShapeBounding, 0, 0, fullMask, ShapeSet);
                                 XFreePixmap(_display, fullMask);
-
-                                if (useShm)
-                                {
-                                    CreateShmImage(width, height);
-                                }
 
                                 UpdateInputMask(width, height);
                             }
@@ -1207,9 +1100,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private List<Rect> _monitors = new();
     private IntPtr _netWmState, _netWmStateFullscreen, _netWmStateMaxHorz, _netWmStateMaxVert;
     private IntPtr _netWmWindowType;
-    private bool useShm;
-    private XShmSegmentInfo shminfo;
-    private IntPtr shmImage = IntPtr.Zero;
 
     // X11 Constants
     private const int XaCardinal = 6;
@@ -1244,12 +1134,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private const ulong GCBackground = (1UL << 3);
     private const int ZPixmap = 2;
     private const ulong AllPlanes = 0xFFFFFFFFFFFFFFFFUL; // For 64-bit
-    
-    // Shared Memory Constants
-    private const int IPC_PRIVATE = 0;
-    private const int IPC_CREAT = 512; // 01000 octal
-    private const int IPC_RMID = 0;
-    private const string LibC = "libc.so.6";
 
     public const string LibX11 = "libX11.so.6";
     private const string LibXExt = "libXext.so.6";
@@ -1545,37 +1429,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         public int npreferred;
         public IntPtr modes;        // array of mode XIDs
     }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    private struct XShmSegmentInfo
-    {
-        public IntPtr shmseg;
-        public int shmid;
-        public IntPtr shmaddr;
-        [MarshalAs(UnmanagedType.Bool)]
-        public bool readOnly;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct XImage
-    {
-        public int width;
-        public int height;
-        public int xoffset;
-        public int format;
-        public IntPtr data;
-        public int byte_order;
-        public int bitmap_unit;
-        public int bitmap_bit_order;
-        public int bitmap_pad;
-        public int depth;
-        public int bytes_per_line;
-        public int bits_per_pixel;
-        public ulong red_mask;
-        public ulong green_mask;
-        public ulong blue_mask;
-        // Additional fields exist in the full XImage, but these suffice for our use.
-    }
         
     private enum Connection : byte
     {
@@ -1608,10 +1461,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         ReflectX  = 1 << 4,
         ReflectY  = 1 << 5
     }
-    
+
     // Error handler delegate type
     private delegate int XErrorHandler(IntPtr display, IntPtr errorEvent);
-    
+
     [StructLayout(LayoutKind.Sequential)]
     private struct XErrorEvent
     {
@@ -1623,13 +1476,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         public byte minor_code;
         public IntPtr resourceid;
     }
-    
+        
     // X11 Library imports
     [DllImport(LibX11)]
     private static extern int XInitThreads();
-    
-    [DllImport(LibX11)]
-    private static extern int XFreeThreads();
     
     [DllImport(LibX11)]
     private static extern IntPtr XOpenDisplay(string displayName);
@@ -1816,43 +1666,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     [DllImport(LibX11)]
     private static extern string XGetAtomName(IntPtr display, IntPtr atom);
-    
+
     [DllImport(LibX11)]
-    private static extern IntPtr XGetErrorText(IntPtr display, int code, out byte[] buffer, int size);
-    
+    private static extern bool XGetErrorText(IntPtr display, int code, byte[] buffer, int size);
+
     [DllImport(LibX11)]
     private static extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
-    
-    [DllImport(LibXExt)]
-    private static extern bool XShmQueryExtension(IntPtr display, out int eventBase, out int errorBase);
-
-    [DllImport(LibXExt)]
-    private static extern bool XShmQueryVersion(IntPtr display, out int major, out int minor, out bool sharedPixmaps);
-
-    [DllImport(LibXExt)]
-    private static extern IntPtr XShmCreateImage(IntPtr display, IntPtr visual, uint depth, int format, IntPtr offset, ref XShmSegmentInfo shminfo, uint width, uint height);
-
-    [DllImport(LibXExt)]
-    private static extern bool XShmAttach(IntPtr display, ref XShmSegmentInfo shminfo);
-
-    [DllImport(LibXExt)]
-    private static extern bool XShmDetach(IntPtr display, ref XShmSegmentInfo shminfo);
-
-    [DllImport(LibXExt)]
-    private static extern bool XShmGetImage(IntPtr display, IntPtr drawable, IntPtr image, int x, int y, ulong planeMask);
-
-    // System V Shared Memory DllImports
-    [DllImport(LibC)]
-    private static extern int shmget(int key, int size, int flag);
-
-    [DllImport(LibC)]
-    private static extern IntPtr shmat(int shmid, IntPtr shmaddr, int shmflg);
-
-    [DllImport(LibC)]
-    private static extern int shmdt(IntPtr shmaddr);
-
-    [DllImport(LibC)]
-    private static extern int shmctl(int shmid, int cmd, IntPtr buf);
 
     #endregion
 }

@@ -1949,6 +1949,11 @@ MonoBehaviour:
     m_Localized: "\u0414\u043E\u0431\u0430\u0432\u0438\u0442\u044C \u0442\u0430\u0439\u043C\u0435\u0440"
     m_Metadata:
       m_Items: []
+  - m_Id: 100545249549606912
+    m_Localized: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438, \u0441\u043F\u0435\u0446\u0438\u0444\u0438\u0447\u043D\u044B\u0435
+      \u0434\u043B\u044F Linux"
+    m_Metadata:
+      m_Items: []
   references:
     version: 2
     RefIds: []
