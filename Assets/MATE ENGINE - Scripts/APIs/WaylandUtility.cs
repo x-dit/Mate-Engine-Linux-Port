@@ -1,4 +1,3 @@
-using System;
 using UnityEngine;
 using System.Diagnostics;
 using System.Threading.Tasks;
@@ -37,8 +36,10 @@ public static class WaylandUtility
             CreateNoWindow = true
         };
 
-        using Process p = Process.Start(psi);
-        p?.WaitForExit();
-        return p?.StandardOutput.ReadToEnd();
+        using (Process p = Process.Start(psi))
+        {
+            p?.WaitForExit();
+            return p?.StandardOutput.ReadToEnd();
+        }
     }
 }

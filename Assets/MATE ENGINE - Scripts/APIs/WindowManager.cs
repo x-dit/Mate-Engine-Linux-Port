@@ -309,7 +309,15 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         SetWindowPosition(absolutePos);
     }
-        
+    
+    public void SetTransientFor(IntPtr parentWindow)
+    {
+        if (_display == IntPtr.Zero || _unityWindow == IntPtr.Zero) return;
+    
+        XSetTransientForHint(_display, _unityWindow, parentWindow);
+        XFlush(_display);
+    }
+    
     public void QueryMonitors()
     {
         _monitors = new List<Rect>();
@@ -923,7 +931,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         return atoms;
     }
         
-    private List<IntPtr> GetClientStackingList()
+    public List<IntPtr> GetClientStackingList()
     {
         var atom = XInternAtom(_display, "_NET_CLIENT_LIST_STACKING", false);
         if (atom == IntPtr.Zero) return new List<IntPtr>();
@@ -1761,6 +1769,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
     [DllImport(LibX11)]
     private static extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
+    
+    [DllImport(LibX11)]
+    private static extern int XSetTransientForHint(IntPtr display, IntPtr w, IntPtr prop_window);
 
     #endregion
 }
