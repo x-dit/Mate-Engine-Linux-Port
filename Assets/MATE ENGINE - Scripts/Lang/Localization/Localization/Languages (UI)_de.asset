@@ -1429,36 +1429,42 @@ MonoBehaviour:
     m_Metadata:
       m_Items: []
   - m_Id: 107786555707482112
-    m_Localized: Use XMoveWindow and XResizeWindow instead of _NET_MOVERESIZE_WINDOW
+    m_Localized: XMoveWindow und XResizeWindow statt _NET_MOVERESIZE_WINDOW verwenden
     m_Metadata:
       m_Items: []
   - m_Id: 107787011036930048
-    m_Localized: "Both XMoveWindow and XResizeWindow bypass WM and updates the window\u2019s
-      origin directly, which can leave window decorations out of sync. _NET_MOVERESIZE_WINDOW
+    m_Localized: "Both XMoveWindow and XResizeWindow bypass WM and updates the window
+      directly, which can leave window decorations out of sync. _NET_MOVERESIZE_WINDOW
       protocol sends a message to ask WM to move and resize MateEngine window as
       a complete, decorated unit on every modern Linux desktop while respecting the
-      user\u2019s compositor animations and tiling rules.\\n\\nOnly enable this option
+      user\u2019s compositor animations and tiling rules.\n\nOnly enable this option
       in case that you cannot drag and move your avatar or toggle window size at
       all."
     m_Metadata:
       m_Items: []
   - m_Id: 107787399546920960
-    m_Localized: Enable Periodic Memory Optimization
+    m_Localized: Periodische Speicheroptimierung aktivieren
     m_Metadata:
       m_Items: []
   - m_Id: 107787629541580800
     m_Localized: 'This feature reduces MateEngine''s physical RAM usage by releasing
       inactive memory pages and returning freed heap memory to the system. It proactively
-      frees RAM for better multitasking on low-memory devices.\n\nNote: To safely
+      frees RAM for better multitasking on low-memory devices.
+
+
+      Note: To safely
       preserve modified data, some pages may be temporarily written to swap space
       (virtual memory on disk). This can cause a short-term increase in swap usage,
       but the data reloads quickly if needed. Minor hitches may occur if frequently
-      accessed data is reloaded.\n\nRecommended for systems with 16GB RAM or less.
-      Require at least 1 GiB swap space.'
+      accessed data is reloaded.
+
+
+      Recommended for systems with 16GB RAM or
+      less. Require at least 1 GiB swap space.'
     m_Metadata:
       m_Items: []
   - m_Id: 107787868323307520
-    m_Localized: 'Window Type: '
+    m_Localized: 'Fenstertyp: '
     m_Metadata:
       m_Items: []
   - m_Id: 107787947293663232

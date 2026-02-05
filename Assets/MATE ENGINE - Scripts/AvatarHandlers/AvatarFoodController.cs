@@ -181,7 +181,7 @@ public class AvatarFoodController : MonoBehaviour
         bool inside = (mouse - centerScreen).sqrMagnitude <= rPx * rPx;
         if (inside && !wasInside && Time.time >= nextInteractAt)
         {
-            PlayRandom(activeEntry != null ? activeEntry.interactClips : null, interactionAudio, activeEntry);
+            PlayRandom(activeEntry?.interactClips, interactionAudio, activeEntry);
             nextInteractAt = Time.time + interactCooldown;
         }
         wasInside = inside;

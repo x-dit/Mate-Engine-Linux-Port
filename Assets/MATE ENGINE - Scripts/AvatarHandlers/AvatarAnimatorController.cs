@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using PulseAudio;
 using UnityEngine;
 using Random = UnityEngine.Random;
@@ -16,7 +17,7 @@ public class AvatarAnimatorController : MonoBehaviour
     public int DANCE_CLIP_COUNT = 5;
 
     [Header("Dancing")]
-    public bool enableDancing = true;           
+    public bool enableDancing = true;
     public bool enableDanceSwitch = true;
     public float DANCE_SWITCH_TIME = 15f;
     public float DANCE_TRANSITION_TIME = 2f;       
@@ -113,6 +114,13 @@ public class AvatarAnimatorController : MonoBehaviour
         {
             audioPrograms = programs;
             isComplete = true;
+            for (var i = 0; i < programs.Count; i++)
+            {
+                foreach (var t in allowedApps.Where(t => audioPrograms[i].Name.StartsWith(t, StringComparison.OrdinalIgnoreCase) | audioPrograms[i].ProcessName.StartsWith(t, StringComparison.OrdinalIgnoreCase)))
+                {
+                    PulseAudioManager.Instance.StartMonitoringStream(audioPrograms[i].NodeId);
+                }
+            }
         });
         while (!isComplete)
         {
@@ -124,10 +132,16 @@ public class AvatarAnimatorController : MonoBehaviour
             {
                 for (int j = 0; j < allowedApps.Count; j++)
                 {
-                    if (audioPrograms[i].ProcessName == string.Empty & audioPrograms[i].Name.StartsWith(allowedApps[j], StringComparison.OrdinalIgnoreCase) | audioPrograms[i].ProcessName.StartsWith(allowedApps[j], StringComparison.OrdinalIgnoreCase) && audioPrograms[i].volume > SOUND_THRESHOLD)
+                    if (audioPrograms[i].Name.StartsWith(allowedApps[j], StringComparison.OrdinalIgnoreCase) | audioPrograms[i].ProcessName.StartsWith(allowedApps[j], StringComparison.OrdinalIgnoreCase))
                     {
-                        result = true;
-                        break;
+                        var peak = PulseAudioManager.Instance.ProgramPeaks[audioPrograms[i].NodeId];
+                        if (peak > SOUND_THRESHOLD)
+                        {
+                            print($"{audioPrograms[i].ProcessName} is loud. {peak} > {SOUND_THRESHOLD}");
+                            result = true;
+                            break;
+                        }
+                        print($"{audioPrograms[i].ProcessName} is not loud enough. {peak} < {SOUND_THRESHOLD}");
                     }
                 }
                 if (result) break;

@@ -966,6 +966,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         // Create a dedicated thread instead of Task.Run
         _x11EventThread = new Thread(ApplyShaping)
         {
+            Name = "WinShapeThread",
             // Very important: This ensures the thread closes if the game exits
             IsBackground = true
         };

@@ -170,14 +170,14 @@ public class AvatarMinecraftMessages : MonoBehaviour
                 continue;
             }
 
-            if (e.type == "day_start" || e.type == "time_day")
+            if (e.type == "day_start")
             {
                 if (debugLog) Debug.Log("[AvatarMinecraftMessages] Event: day_start");
                 ShowEvent(McEventType.DayStart, "");
                 continue;
             }
 
-            if (e.type == "night_start" || e.type == "time_night")
+            if (e.type == "night_start")
             {
                 if (debugLog) Debug.Log("[AvatarMinecraftMessages] Event: night_start");
                 ShowEvent(McEventType.NightStart, "");

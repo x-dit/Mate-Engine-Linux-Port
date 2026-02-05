@@ -18,6 +18,6 @@ echo "\`\`\`"
 
 export SDL_VIDEO_X11_VISUALID=$visual_id
 
-SDL_VIDEO_X11_VISUALID=$visual_id "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/MateEngineX.$(uname -m)" "$@"
+SDL_VIDEO_X11_VISUALID=$visual_id "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/MateEngineX.$(uname -m)" "$@" | grep -v "[Vulkan init] extensions: "
 
 echo "\`\`\`"

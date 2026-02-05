@@ -1,5 +1,6 @@
 using Gtk;
 using UnityEngine;
+using UnityEngine.Localization;
 using UnityEngine.Localization.Settings;
 using UnityEngine.Localization.Tables;
 using Application = Gtk.Application;
@@ -30,13 +31,27 @@ public class LinuxSpecificSettings : MonoBehaviour
     private bool showWindow;
 
     private bool inEditor;
+
+    private Label title;
+    private Label intro;
+    private CheckButton legacyMoveToggle;
+    private Label legacyMoveDesc;
+    private CheckButton memTrimToggle;
+    private Label memTrimDesc;
+    private Label winTypeLabel;
+    private ComboBox winTypeCombo;
+    private Label winTypeDesc;
+    private Button cancelBtn;
+    private Button saveBtn;
+    
     public void Start()
     {
         stringTable = LocalizationSettings.StringDatabase.GetTable("Languages (UI)");
-        #if UNITY_EDITOR
+        LocalizationSettings.SelectedLocaleChanged += OnLocaleChanged;
+#if UNITY_EDITOR
         inEditor = true;
         return;
-        #endif
+#endif
         window = new Window(UnityEngine.Application.productName)
         {
             Resizable = false,
@@ -48,6 +63,8 @@ public class LinuxSpecificSettings : MonoBehaviour
         {
             ShowWindow(false);
         };
+        
+        SetupGtkWindow(window);
     }
 
     public void ShowWindow(bool show = true)
@@ -65,7 +82,6 @@ public class LinuxSpecificSettings : MonoBehaviour
         if (show)
         {
             WindowManager.Instance.SetTopmost(false);
-            SetupGtkWindow(window);
             window.ShowAll();
             Application.Run();
             return;
@@ -73,6 +89,43 @@ public class LinuxSpecificSettings : MonoBehaviour
         WindowManager.Instance.SetTopmost(SaveLoadHandler.Instance.data.isTopmost);
         window.Hide();
         Application.Quit();
+    }
+    
+    private void UpdateTexts()
+    {
+        if (!stringTable) return;
+
+        title.Markup = $"<span size=\"x-large\" weight=\"bold\">{stringTable.GetEntry("LINUX_SPECIFIC").GetLocalizedString()}</span>";
+        intro.Text = stringTable.GetEntry("LINUX_SPECIFIC_TIP").GetLocalizedString();
+
+        ((Label)legacyMoveToggle.Child).Text = stringTable.GetEntry("LSS_XMOVE").GetLocalizedString();
+        legacyMoveDesc.Text = stringTable.GetEntry("LSS_XMOVE_TIP").GetLocalizedString();
+
+        ((Label)memTrimToggle.Child).Text = stringTable.GetEntry("LSS_PMO").GetLocalizedString();
+        memTrimDesc.Text = stringTable.GetEntry("LSS_PMO_TIP").GetLocalizedString();
+
+        var model = new ListStore(typeof(string));
+        model.AppendValues(stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString());
+        model.AppendValues(stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString());
+        winTypeCombo.Model = model;
+        winTypeCombo.Active = (int)SaveLoadHandler.Instance.data.windowType;
+        
+        winTypeLabel.Text = stringTable.GetEntry("LSS_WINTYPE").GetLocalizedString();
+        winTypeDesc.Text = stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString();
+
+        cancelBtn.Label = stringTable.GetEntry("CANCEL").GetLocalizedString();
+        saveBtn.Label = stringTable.GetEntry("SAVE").GetLocalizedString();
+    }
+    
+    private void OnLocaleChanged(Locale locale)
+    {
+        stringTable = LocalizationSettings.StringDatabase.GetTable("Languages (UI)");
+        if (inEditor | SaveLoadHandler.Instance.safeMode) return;
+        GLib.Idle.Add(() =>
+        {
+            UpdateTexts();
+            return false;
+        });
     }
 
     void SetupGtkWindow(Window window)
@@ -94,7 +147,7 @@ public class LinuxSpecificSettings : MonoBehaviour
         };
         mainBox.PackStart(contentBox, true, true, 0);
         
-        var title = new Label(null)
+        title = new Label(null)
         {
             Markup = $"<span size=\"x-large\" weight=\"bold\">{stringTable.GetEntry("LINUX_SPECIFIC").GetLocalizedString()}</span>"
         };
@@ -112,68 +165,68 @@ public class LinuxSpecificSettings : MonoBehaviour
         var cardBox = new Box(Orientation.Vertical, 20);
         scrolledWindow.Add(cardBox);
 
-        var intro = new Label(stringTable.GetEntry("LINUX_SPECIFIC_TIP").GetLocalizedString())
+        intro = new Label(stringTable.GetEntry("LINUX_SPECIFIC_TIP").GetLocalizedString())
         {
             LineWrap = true
         };
         intro.Xalign = 0.0f;
         intro.Yalign = 0.5f;
-        cardBox.PackStart(intro, false, false, 0);
+        cardBox.PackStart(intro, false, false, 0); 
         
-        var check1 = new CheckButton(stringTable.GetEntry("LSS_XMOVE").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls, UseUnderline = false};
-        //check1.MarginTop = 40;
-        ((Label)check1.Child).Xalign = 0.0f;
-        ((Label)check1.Child).Yalign = 0.5f;
-        cardBox.PackStart(check1, false, false, 0);
+        legacyMoveToggle = new CheckButton(stringTable.GetEntry("LSS_XMOVE").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls, UseUnderline = false};
+        //legacyMoveToggle.MarginTop = 40;
+        ((Label)legacyMoveToggle.Child).Xalign = 0.0f;
+        ((Label)legacyMoveToggle.Child).Yalign = 0.5f;
+        cardBox.PackStart(legacyMoveToggle, false, false, 0);
 
-        var desc1 = CreateDescriptionLabel(stringTable.GetEntry("LSS_XMOVE_TIP").GetLocalizedString());
-        cardBox.PackStart(desc1, false, false, 0);
+        legacyMoveDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_XMOVE_TIP").GetLocalizedString());
+        cardBox.PackStart(legacyMoveDesc, false, false, 0);
         
-        var check2 = new CheckButton(stringTable.GetEntry("LSS_PMO").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.enableAutoMemoryTrim, UseUnderline = false};
-        ((Label)check2.Child).Xalign = 0.0f;
-        ((Label)check2.Child).Yalign = 0.5f;
-        cardBox.PackStart(check2, false, false, 0);
+        memTrimToggle = new CheckButton(stringTable.GetEntry("LSS_PMO").GetLocalizedString()) {Active = SaveLoadHandler.Instance.data.enableAutoMemoryTrim, UseUnderline = false};
+        ((Label)memTrimToggle.Child).Xalign = 0.0f;
+        ((Label)memTrimToggle.Child).Yalign = 0.5f;
+        cardBox.PackStart(memTrimToggle, false, false, 0);
 
-        var desc2 = CreateDescriptionLabel(stringTable.GetEntry("LSS_PMO_TIP").GetLocalizedString());
-        cardBox.PackStart(desc2, false, false, 0);
+        memTrimDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_PMO_TIP").GetLocalizedString());
+        cardBox.PackStart(memTrimDesc, false, false, 0);
 
         var hbox = new Box(Orientation.Horizontal, 5);
         cardBox.PackStart(hbox, false, false, 0);
 
-        var label = new Label(stringTable.GetEntry("LSS_WINTYPE").GetLocalizedString());
-        label.Xalign = 0.0f;
-        label.Yalign = 0.5f;
-        hbox.PackStart(label, false, false, 0);
+        winTypeLabel = new Label(stringTable.GetEntry("LSS_WINTYPE").GetLocalizedString());
+        winTypeLabel.Xalign = 0.0f;
+        winTypeLabel.Yalign = 0.5f;
+        hbox.PackStart(winTypeLabel, false, false, 0);
 
-        var comboBox = new ComboBox(new[] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString() }){Active = (int)SaveLoadHandler.Instance.data.windowType};
-        hbox.PackStart(comboBox, false, false, 0);
+        winTypeCombo = new ComboBox(new[] { stringTable.GetEntry("LSS_WINTYPE_NORMAL").GetLocalizedString(), stringTable.GetEntry("LSS_WINTYPE_DOCK").GetLocalizedString() }){Active = (int)SaveLoadHandler.Instance.data.windowType};
+        hbox.PackStart(winTypeCombo, false, false, 0);
         
-        var desc3 = CreateDescriptionLabel(stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString());
-        cardBox.PackStart(desc3, false, false, 0);
+        winTypeDesc = CreateDescriptionLabel(stringTable.GetEntry("LSS_WINTYPE_TIP").GetLocalizedString());
+        cardBox.PackStart(winTypeDesc, false, false, 0);
         
         var buttonBox = new Box(Orientation.Horizontal, 20) { Halign = Align.End };
         contentBox.PackEnd(buttonBox, false, false, 0);
 
-        var backBtn = new Button(stringTable.GetEntry("CANCEL").GetLocalizedString());
-        var continueBtn = new Button(stringTable.GetEntry("SAVE").GetLocalizedString());
-        continueBtn.StyleContext.AddClass("suggested-action");
+        cancelBtn = new Button(stringTable.GetEntry("CANCEL").GetLocalizedString());
+        saveBtn = new Button(stringTable.GetEntry("SAVE").GetLocalizedString());
+        saveBtn.StyleContext.AddClass("suggested-action");
 
-        backBtn.Clicked += (_, _) =>
+        cancelBtn.Clicked += (_, _) =>
         {
             ShowWindow(false);
         };
-        continueBtn.Clicked += (_, _) =>
+        saveBtn.Clicked += (_, _) =>
         {
             ShowWindow(false);
-            SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls = check1.Active;
-            SaveLoadHandler.Instance.data.enableAutoMemoryTrim = check2.Active;
-            SaveLoadHandler.Instance.data.windowType = (WindowType)comboBox.Active;
+            SaveLoadHandler.Instance.data.useLegacyMoveResizeCalls = legacyMoveToggle.Active;
+            SaveLoadHandler.Instance.data.enableAutoMemoryTrim = memTrimToggle.Active;
+            SaveLoadHandler.Instance.data.windowType = (WindowType)winTypeCombo.Active;
             FindFirstObjectByType<SettingsHandlerToggles>().ApplySettings();
             SaveLoadHandler.Instance.SaveToDisk();
         };
 
-        buttonBox.PackStart(backBtn, false, false, 0);
-        buttonBox.PackStart(continueBtn, false, false, 0);
+        buttonBox.PackStart(cancelBtn, false, false, 0);
+        buttonBox.PackStart(saveBtn, false, false, 0);
 
         // CSS 样式
         var cssProvider = new CssProvider();
@@ -237,6 +290,11 @@ public class LinuxSpecificSettings : MonoBehaviour
         // Optional: Clamp to screen edges to prevent dragging completely off-screen
         windowRect.x = Mathf.Clamp(windowRect.x, 0, Screen.width - windowRect.width);
         windowRect.y = Mathf.Clamp(windowRect.y, 0, Screen.height - windowRect.height);
+    }
+    
+    public void OnDestroy()
+    {
+        LocalizationSettings.SelectedLocaleChanged -= OnLocaleChanged;
     }
 
     private void DrawWindow(int windowId)

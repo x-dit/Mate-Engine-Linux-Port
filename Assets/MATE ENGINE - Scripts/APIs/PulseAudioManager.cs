@@ -1,3 +1,5 @@
+#pragma warning disable CS0168
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -7,12 +9,13 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using AOT;
-using Unity.Collections;
+using Microsoft.VisualBasic.Devices;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
 namespace PulseAudio
 {
+    [Serializable]
     public class AudioProgram
     {
         public string Name { get; set; }
@@ -22,7 +25,7 @@ namespace PulseAudio
         public bool IsMuted { get; set; }
         public bool IsCorked { get; set; }
         public string MediaClass { get; set; }
-        public double volume { get; set; }
+        public double Volume { get; set; }
     }
 
     public class PulseAudioManager : MonoBehaviour
@@ -74,6 +77,58 @@ namespace PulseAudio
         
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern int pa_operation_get_state(IntPtr operation);
+        
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr pa_stream_new(IntPtr context, string name, ref PaSampleSpec ss, IntPtr map);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int pa_stream_connect_record(IntPtr s, string dev, IntPtr attr, int flags);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void pa_stream_set_read_callback(IntPtr s, PaStreamRequestCbT cb, IntPtr userdata);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int pa_stream_peek(IntPtr s, out IntPtr data, out uint nbytes);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int pa_stream_drop(IntPtr s);
+        
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void pa_stream_disconnect(IntPtr s);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void pa_stream_unref(IntPtr s);
+        
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr pa_context_subscribe(IntPtr context, PaSubscriptionMask mask, PaContextSuccessCbT cb, IntPtr userdata);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void pa_context_set_subscribe_callback(IntPtr context, PaSubscribeCbT cb, IntPtr userdata);
+        
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int pa_stream_set_monitor_stream(IntPtr s, uint idx);
+
+        private enum PaSubscriptionMask { SinkInput = 0x0004 }
+        
+        private enum PaSubscriptionEventType 
+        { 
+            TypeMask = 0x0030,
+            FacilityMask = 0x000F,
+            New = 0x0000,
+            Change = 0x0010,
+            Remove = 0x0020
+        }
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void PaContextSuccessCbT(IntPtr c, int success, IntPtr userdata);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void PaSubscribeCbT(IntPtr c, PaSubscriptionEventType t, uint index, IntPtr userdata);
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void PaStreamRequestCbT(IntPtr s, uint nbytes, IntPtr userdata);
+
+        private const int PA_STREAM_PEAK_DETECT = 0x0800;
+        private const int PA_STREAM_ADJUST_LATENCY = 0x0008;
         
         private enum PaOperationState
         {
@@ -168,7 +223,8 @@ namespace PulseAudio
         
         #endregion
 
-        private List<AudioProgram> _audioPrograms = new();
+        private readonly List<AudioProgram> _audioPrograms = new();
+        public Dictionary<uint, float> ProgramPeaks = new ();
         private IntPtr _mainloop;
         private IntPtr _context;
         private bool _initialized;
@@ -181,6 +237,8 @@ namespace PulseAudio
         private readonly object _programsLock = new();
         
         private PaSinkInputInfoCbT _cachedSinkInputCb;
+        private PaSubscribeCbT _cachedSubscriptionCb;
+        private PaContextSuccessCbT _successDelegate;
         
         private Thread _mainloopThread;
         private volatile bool _running;
@@ -189,6 +247,8 @@ namespace PulseAudio
         {
             Instance = this;
             _cachedSinkInputCb = OnSinkInputInfo;
+            _cachedSubscriptionCb = OnSubscriptionEvent;
+            _successDelegate = SubscribeSuccessCb;
             Init();
         }
 
@@ -210,9 +270,7 @@ namespace PulseAudio
                 pa_mainloop_free(_mainloop);
                 throw new Exception("Failed to create PulseAudio context");
             }
-
-            // No state callback needed
-
+            
             if (pa_context_connect(_context, null, 0, IntPtr.Zero) < 0)
             {
                 Cleanup();
@@ -221,7 +279,10 @@ namespace PulseAudio
 
             Log("PulseAudio mainloop initialized. Connecting...");
             _running = true;
-            _mainloopThread = new Thread(MainloopThread);
+            _mainloopThread = new Thread(MainloopThread)
+            {
+                Name = "PaManThread",
+            };
             _mainloopThread.Start();
             StartCoroutine(CheckReady());
             _initialized = true;
@@ -235,6 +296,8 @@ namespace PulseAudio
                 if (state == PaContextState.Ready)
                 {
                     _contextReady = true;
+                    pa_context_set_subscribe_callback(_context, _cachedSubscriptionCb, IntPtr.Zero);
+                    pa_context_subscribe(_context, PaSubscriptionMask.SinkInput, _successDelegate, IntPtr.Zero);
                     break;
                 }
                 if (state == PaContextState.Failed || state == PaContextState.Terminated)
@@ -247,7 +310,7 @@ namespace PulseAudio
             }
 
             allSet = true;
-            Log("PulseAudio context ready.");
+            Log("PulseAudio context ready. Event subscribed.");
             // Test with: GetPlayingAudioPrograms(programs => { Log($"Found {programs.Count} programs"); });
         }
         
@@ -320,6 +383,11 @@ namespace PulseAudio
                     lock (_programsLock)
                     {
                         _audioPrograms.Add(audioProgram);
+                        if (SaveLoadHandler.Instance.data.allowedApps.Contains(audioProgram.Name) |
+                            SaveLoadHandler.Instance.data.allowedApps.Contains(audioProgram.ProcessName))
+                        {
+                            StartMonitoringStream(audioProgram.NodeId);
+                        }
                     }
                     //Log($"Found playback process: {audioProgram.ProcessName}");
                 }
@@ -327,6 +395,101 @@ namespace PulseAudio
             catch (Exception ex)
             {
                 ShowError($"Error in sink input callback: {ex.Message}");
+            }
+        }
+        
+        private readonly Dictionary<uint, IntPtr> _activeMonitors = new();
+        
+        public void StartMonitoringStream(uint sinkInputIndex)
+        {
+            if (_activeMonitors.TryGetValue(sinkInputIndex, out _)) return;
+            PaSampleSpec ss = new PaSampleSpec { format = 5, rate = 25, channels = 1 };
+            var stream = pa_stream_new(_context, "MateEnginePeakDetection", ref ss, IntPtr.Zero);
+            
+            pa_stream_set_monitor_stream(stream, sinkInputIndex);
+            pa_stream_set_read_callback(stream, OnStreamRead, (IntPtr)sinkInputIndex);
+            int connectRet = pa_stream_connect_record(stream, null, IntPtr.Zero, PA_STREAM_PEAK_DETECT | PA_STREAM_ADJUST_LATENCY);
+            if (connectRet < 0)
+            {
+                ShowError($"Failed to connect monitor stream for node {sinkInputIndex}");
+                pa_stream_unref(stream);
+                return;
+            }
+            _activeMonitors.Add(sinkInputIndex, stream);
+            ProgramPeaks.Add(sinkInputIndex, -1);
+        }
+        
+        private void StopMonitoringStream(uint index)
+        {
+            if (!_activeMonitors.TryGetValue(index, out var stream)) return;
+            pa_stream_disconnect(stream);
+            pa_stream_unref(stream);
+            _activeMonitors.Remove(index);
+        
+            lock (_programsLock)
+            {
+                _audioPrograms.RemoveAll(p => p.NodeId == index);
+                ProgramPeaks.Remove(index);
+            }
+        }
+        
+        [MonoPInvokeCallback(typeof(PaStreamRequestCbT))]
+        private void OnStreamRead(IntPtr s, uint nbytes, IntPtr userdata)
+        {
+            if (pa_stream_peek(s, out IntPtr data, out uint length) < 0) return;
+
+            if (data != IntPtr.Zero && length > 0)
+            {
+                int sampleCount = (int)length / sizeof(float); // 4 bytes per float
+                float[] samples = new float[sampleCount];
+                Marshal.Copy(data, samples, 0, sampleCount);
+
+                float maxPeak = 0f;
+                for (int i = 0; i < sampleCount; i++)
+                {
+                    if (samples[i] > maxPeak) maxPeak = samples[i];
+                }
+        
+                UpdateProgramPeak(userdata, maxPeak);
+            }
+            pa_stream_drop(s);
+        }
+        
+        [MonoPInvokeCallback(typeof(PaSubscribeCbT))]
+        private void OnSubscriptionEvent(IntPtr c, PaSubscriptionEventType t, uint index, IntPtr userdata)
+        {
+            var type = t & PaSubscriptionEventType.TypeMask;
+
+            if (type == PaSubscriptionEventType.New)
+            {
+                lock (_audioPrograms)
+                {
+                    var audioProgram = _audioPrograms.FirstOrDefault(p => p.NodeId == index);
+                    if (audioProgram != null && SaveLoadHandler.Instance.data.allowedApps.Contains(audioProgram.Name) |
+                        SaveLoadHandler.Instance.data.allowedApps.Contains(audioProgram.ProcessName))
+                    {
+                        StartMonitoringStream(audioProgram.NodeId);
+                    }
+                }
+            }
+            if (type == PaSubscriptionEventType.Remove)
+            {
+                StopMonitoringStream(index);
+            }
+        }
+        
+        private void SubscribeSuccessCb(IntPtr context, int success, IntPtr userdata)
+        {
+            if (success == 0) ShowError("Failed to subscribe to events");
+        }
+
+        private static void UpdateProgramPeak(IntPtr idPtr, float peak)
+        {
+            uint nodeId = (uint)idPtr.ToInt32();
+            var program = Instance._audioPrograms.FirstOrDefault(p => p.NodeId == nodeId);
+            if (program != null)
+            {
+                Instance.ProgramPeaks[nodeId] = peak;
             }
         }
 
@@ -345,8 +508,8 @@ namespace PulseAudio
                 Name = $"SinkInput {sinkInput.index}",
                 ProcessName = "",
                 ProcessId = 0,
-                MediaClass = "Stream/SinkInput",
-                volume = volumes.Average(),
+                MediaClass = "Audio/Stream/Output",
+                Volume = volumes.Average(),
             };
 
             if (sinkInput.proplist == IntPtr.Zero)
@@ -451,6 +614,11 @@ namespace PulseAudio
 
         public void Cleanup()
         {
+            for (int i = 0; i < _activeMonitors.Keys.Count; i++)
+            {
+                StopMonitoringStream(_activeMonitors.Keys.ElementAt(i));
+                i--;
+            }
             if (_context != IntPtr.Zero)
             {
                 pa_context_disconnect(_context);
@@ -472,6 +640,8 @@ namespace PulseAudio
 
             _initialized = false;
             _contextReady = false;
+            _cachedSinkInputCb = null;
+            _cachedSubscriptionCb = null;
             lock (_programsLock)
             {
                 _audioPrograms.Clear();
