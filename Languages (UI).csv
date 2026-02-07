@@ -30,13 +30,8 @@ Key,Id,English(en),Japanese(ja),Russian(ru),Spanish(es),Chinese (Simplified)(zh-
 ","Taille de l'avatar
 ","Аватар өлшемі","아바타 크기
 ","Wielkość awatara","Avatar Boyutu","Розмір аватару"
-"SAVE",11245612687360,"Save","セーブ","Сохранить","Guardar","保存","儲存
-","Speichern","Sauvegarder
-","Сақтау","저장
-","Zapisz","Kaydet","Зберегти "
-"RESET",11320741060608,"Reset","リセット","Сбросить","Restablecer","重置
-","重設
-","Zurücksetzen","Réinitialiser
+"SAVE",11245612687360,"Save","セーブ","Сохранить","Guardar","保存","儲存","Speichern","Sauvegarder","Сақтау","저장","Zapisz","Kaydet","Зберегти "
+"RESET",11320741060608,"Reset","リセット","Сбросить","Restablecer","重置","重設","Zurücksetzen","Réinitialiser
 ","Қалпына келтіру","초기화
 ","Zresetuj","Sıfırla","Скинути"
 "POLY_COUNT",11321303097344,"Polys","ポリゴン数","Полигоны","Polígo.","总计面数","總計面數
@@ -491,7 +486,7 @@ Only enable this option in case that you cannot drag and move your avatar or tog
 
 Only enable this option in case that you cannot drag and move your avatar or toggle window size at all.","Both XMoveWindow and XResizeWindow bypass WM and updates the window directly, which can leave window decorations out of sync. _NET_MOVERESIZE_WINDOW protocol sends a message to ask WM to move and resize MateEngine window as a complete, decorated unit on every modern Linux desktop while respecting the user’s compositor animations and tiling rules.
 
-Only enable this option in case that you cannot drag and move your avatar or toggle window size at all.","XMoveWindow与XResizeWindow会绕过窗口管理器直接更新窗口原点坐标，可能导致窗口装饰元素不同步。_NET_MOVERESIZE_WINDOW协议通过向窗口管理器发送请求，使现代Linux桌面能够将MateEngine窗口作为带有完整装饰的单元进行移动和尺寸调整，同时遵循用户设定的合成器动画效果与平铺规则。
+Only enable this option in case that you cannot drag and move your avatar or toggle window size at all.","XMoveWindow与XResizeWindow会绕过窗口管理器直接更新窗口，可能导致窗口装饰元素不同步。_NET_MOVERESIZE_WINDOW协议通过向窗口管理器发送请求，使现代Linux桌面能够将MateEngine窗口作为带有完整装饰的单元进行移动和尺寸调整，同时遵循用户设定的合成器动画效果与平铺规则。
 
 仅当你完全无法拖拽移动角色或切换窗口大小时，才建议启用此选项。","Both XMoveWindow and XResizeWindow bypass WM and updates the window directly, which can leave window decorations out of sync. _NET_MOVERESIZE_WINDOW protocol sends a message to ask WM to move and resize MateEngine window as a complete, decorated unit on every modern Linux desktop while respecting the user’s compositor animations and tiling rules.
 

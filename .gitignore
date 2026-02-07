@@ -157,7 +157,6 @@ Assets/Example Avatar - USED FOR MATE ENGINE
 ProjectSettings/Packages
 UserSettings/Layouts
 uWindowCapture.log
-build.sh
 
 # External native libraries - build them by yourself
 Assets/MATE\ ENGINE\ -\ Packages/StandaloneFileBrowser/Plugins/Linux/x86_64/

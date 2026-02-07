@@ -15,7 +15,6 @@ using Debug = UnityEngine.Debug;
 
 namespace PulseAudio
 {
-    [Serializable]
     public class AudioProgram
     {
         public string Name { get; set; }
@@ -88,7 +87,7 @@ namespace PulseAudio
         private static extern void pa_stream_set_read_callback(IntPtr s, PaStreamRequestCbT cb, IntPtr userdata);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        private static extern int pa_stream_peek(IntPtr s, out IntPtr data, out uint nbytes);
+        private static extern int pa_stream_peek(IntPtr s, out IntPtr data, out UIntPtr nbytes);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern int pa_stream_drop(IntPtr s);
@@ -125,10 +124,11 @@ namespace PulseAudio
         private delegate void PaSubscribeCbT(IntPtr c, PaSubscriptionEventType t, uint index, IntPtr userdata);
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate void PaStreamRequestCbT(IntPtr s, uint nbytes, IntPtr userdata);
-
+        private delegate void PaStreamRequestCbT(IntPtr s, UIntPtr nbytes, IntPtr userdata);
+        
+        private const int PA_STREAM_DONT_MOVE = 0x0200;
         private const int PA_STREAM_PEAK_DETECT = 0x0800;
-        private const int PA_STREAM_ADJUST_LATENCY = 0x0008;
+        private const int PA_STREAM_ADJUST_LATENCY = 0x2000;
         
         private enum PaOperationState
         {
@@ -239,6 +239,7 @@ namespace PulseAudio
         private PaSinkInputInfoCbT _cachedSinkInputCb;
         private PaSubscribeCbT _cachedSubscriptionCb;
         private PaContextSuccessCbT _successDelegate;
+        private PaStreamRequestCbT _cachedReadCb;
         
         private Thread _mainloopThread;
         private volatile bool _running;
@@ -248,6 +249,7 @@ namespace PulseAudio
             Instance = this;
             _cachedSinkInputCb = OnSinkInputInfo;
             _cachedSubscriptionCb = OnSubscriptionEvent;
+            _cachedReadCb = OnStreamRead;
             _successDelegate = SubscribeSuccessCb;
             Init();
         }
@@ -264,7 +266,7 @@ namespace PulseAudio
 
             IntPtr api = pa_mainloop_get_api(_mainloop);
 
-            _context = pa_context_new(api, "PulseAudio Monitor");
+            _context = pa_context_new(api, "MateEngine PulseAudio Wrapper");
             if (_context == IntPtr.Zero)
             {
                 pa_mainloop_free(_mainloop);
@@ -297,7 +299,8 @@ namespace PulseAudio
                 {
                     _contextReady = true;
                     pa_context_set_subscribe_callback(_context, _cachedSubscriptionCb, IntPtr.Zero);
-                    pa_context_subscribe(_context, PaSubscriptionMask.SinkInput, _successDelegate, IntPtr.Zero);
+                    var op = pa_context_subscribe(_context, PaSubscriptionMask.SinkInput, _successDelegate, IntPtr.Zero);
+                    StartCoroutine(WaitForOperation(op, () => {}));
                     break;
                 }
                 if (state == PaContextState.Failed || state == PaContextState.Terminated)
@@ -405,10 +408,15 @@ namespace PulseAudio
             if (_activeMonitors.TryGetValue(sinkInputIndex, out _)) return;
             PaSampleSpec ss = new PaSampleSpec { format = 5, rate = 25, channels = 1 };
             var stream = pa_stream_new(_context, "MateEnginePeakDetection", ref ss, IntPtr.Zero);
+            if (stream == IntPtr.Zero)
+            {
+                ShowError("Failed to create a stream for monitoring.");
+                return;
+            }
             
             pa_stream_set_monitor_stream(stream, sinkInputIndex);
-            pa_stream_set_read_callback(stream, OnStreamRead, (IntPtr)sinkInputIndex);
-            int connectRet = pa_stream_connect_record(stream, null, IntPtr.Zero, PA_STREAM_PEAK_DETECT | PA_STREAM_ADJUST_LATENCY);
+            pa_stream_set_read_callback(stream, _cachedReadCb, (IntPtr)sinkInputIndex);
+            int connectRet = pa_stream_connect_record(stream, null, IntPtr.Zero, PA_STREAM_DONT_MOVE | PA_STREAM_PEAK_DETECT | PA_STREAM_ADJUST_LATENCY);
             if (connectRet < 0)
             {
                 ShowError($"Failed to connect monitor stream for node {sinkInputIndex}");
@@ -416,7 +424,8 @@ namespace PulseAudio
                 return;
             }
             _activeMonitors.Add(sinkInputIndex, stream);
-            ProgramPeaks.Add(sinkInputIndex, -1);
+            lock (_programsLock)
+                ProgramPeaks.TryAdd(sinkInputIndex, -1);
         }
         
         private void StopMonitoringStream(uint index)
@@ -434,11 +443,11 @@ namespace PulseAudio
         }
         
         [MonoPInvokeCallback(typeof(PaStreamRequestCbT))]
-        private void OnStreamRead(IntPtr s, uint nbytes, IntPtr userdata)
+        private void OnStreamRead(IntPtr s, UIntPtr nbytes, IntPtr userdata)
         {
-            if (pa_stream_peek(s, out IntPtr data, out uint length) < 0) return;
+            if (pa_stream_peek(s, out IntPtr data, out UIntPtr length) < 0) return;
 
-            if (data != IntPtr.Zero && length > 0)
+            if (data != IntPtr.Zero && (long)length > 0)
             {
                 int sampleCount = (int)length / sizeof(float); // 4 bytes per float
                 float[] samples = new float[sampleCount];
@@ -485,11 +494,15 @@ namespace PulseAudio
 
         private static void UpdateProgramPeak(IntPtr idPtr, float peak)
         {
-            uint nodeId = (uint)idPtr.ToInt32();
-            var program = Instance._audioPrograms.FirstOrDefault(p => p.NodeId == nodeId);
-            if (program != null)
+            uint nodeId = (uint)idPtr.ToInt64();
+            
+            lock (Instance._programsLock) 
             {
-                Instance.ProgramPeaks[nodeId] = peak;
+                var program = Instance._audioPrograms.FirstOrDefault(p => p.NodeId == nodeId);
+                if (program != null)
+                {
+                    Instance.ProgramPeaks[nodeId] = peak;
+                }
             }
         }
 
@@ -614,10 +627,9 @@ namespace PulseAudio
 
         public void Cleanup()
         {
-            for (int i = 0; i < _activeMonitors.Keys.Count; i++)
+            foreach (var key in _activeMonitors.Keys.ToList())
             {
-                StopMonitoringStream(_activeMonitors.Keys.ElementAt(i));
-                i--;
+                StopMonitoringStream(key);
             }
             if (_context != IntPtr.Zero)
             {
@@ -642,6 +654,7 @@ namespace PulseAudio
             _contextReady = false;
             _cachedSinkInputCb = null;
             _cachedSubscriptionCb = null;
+            _cachedReadCb = null;
             lock (_programsLock)
             {
                 _audioPrograms.Clear();

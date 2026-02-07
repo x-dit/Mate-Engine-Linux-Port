@@ -137,11 +137,9 @@ public class AvatarAnimatorController : MonoBehaviour
                         var peak = PulseAudioManager.Instance.ProgramPeaks[audioPrograms[i].NodeId];
                         if (peak > SOUND_THRESHOLD)
                         {
-                            print($"{audioPrograms[i].ProcessName} is loud. {peak} > {SOUND_THRESHOLD}");
                             result = true;
                             break;
                         }
-                        print($"{audioPrograms[i].ProcessName} is not loud enough. {peak} < {SOUND_THRESHOLD}");
                     }
                 }
                 if (result) break;
