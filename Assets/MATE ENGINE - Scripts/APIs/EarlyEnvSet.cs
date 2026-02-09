@@ -133,7 +133,6 @@ public static class EarlyEnvSet
             Debug.LogError("Failed to get window attributes");
             return false;
         }
-
         if (missingLibs.Count > 0)
         {
             var dialog = new MessageDialog(GtkX11Helper.Instance.DummyParent, DialogFlags.DestroyWithParent, MessageType.Warning, ButtonsType.Ok, false, "Some required native libraries could not be loaded.");
