@@ -75,6 +75,7 @@ public class SystemTray : MonoBehaviour
         {
             if (mono == null) continue;
             var type = mono.GetType();
+            if (type.Name != action.className) continue;
             var field = type.GetField(action.toggleField, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null && field.FieldType == typeof(Toggle))
             {
@@ -94,6 +95,7 @@ public class SystemTray : MonoBehaviour
         {
             if (mono == null) continue;
             var type = mono.GetType();
+            if (type.Name != action.className) continue;
             var field = type.GetField(action.toggleField, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null && field.FieldType == typeof(Toggle))
             {

@@ -57,34 +57,60 @@ public class SystemTrayEditor : Editor
 
                     if (actionType == SystemTray.TrayActionType.Toggle)
                     {
-                        var comp = go.GetComponent<MonoBehaviour>();
-                        if (comp != null)
+                        var comps = go.GetComponents<MonoBehaviour>();
+                        var fields = new List<string>();
+                        var classes = new List<string>();
+                        foreach (var comp in comps)
                         {
-                            var fields = new List<string>();
-                            foreach (var f in comp.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
+                            if (comp != null)
                             {
-                                if (f.FieldType == typeof(Toggle)) fields.Add(f.Name);
+                                var type1 = comp.GetType();
+                                foreach (var f in type1.GetFields(BindingFlags.Public | BindingFlags.Instance))
+                                {
+                                    if (f.FieldType == typeof(Toggle))
+                                    {
+                                        fields.Add(f.Name);
+                                        classes.Add(type1.Name);
+                                    }
+                                }
+                                int currentIdx = fields.IndexOf(toggleField.stringValue);
+                                int shownIdx = Mathf.Clamp(currentIdx < 0 ? 0 : currentIdx, 0, Math.Max(fields.Count - 1, 0));
+                                int newIdx = EditorGUI.Popup(new Rect(rect.x, y, rect.width, h), "Toggle Field", shownIdx, fields.ToArray());
+                                if (fields.Count > 0 && newIdx != currentIdx)
+                                {
+                                    toggleField.stringValue = fields[newIdx];
+                                    className.stringValue = classes[newIdx];
+                                }
                             }
-                            int currentIdx = fields.IndexOf(toggleField.stringValue);
-                            int shownIdx = Mathf.Clamp(currentIdx < 0 ? 0 : currentIdx, 0, Math.Max(fields.Count - 1, 0));
-                            int newIdx = EditorGUI.Popup(new Rect(rect.x, y, rect.width, h), "Toggle Field", shownIdx, fields.ToArray());
-                            if (fields.Count > 0 && newIdx != currentIdx) toggleField.stringValue = fields[newIdx];
                         }
                     }
                     else if (actionType == SystemTray.TrayActionType.Button)
                     {
-                        var comp = go.GetComponent<MonoBehaviour>();
-                        if (comp != null)
+                        var comps = go.GetComponents<MonoBehaviour>();
+                        var classes = new List<string>();
+                        var methods = new List<string>();
+                        foreach (var comp in comps)
                         {
-                            var methods = new List<string>();
-                            foreach (var m in comp.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                            if (comp != null)
                             {
-                                if (m.GetParameters().Length == 0 && m.ReturnType == typeof(void)) methods.Add(m.Name);
+                                var type1 = comp.GetType();
+                                foreach (var m in type1.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                                {
+                                    if (m.GetParameters().Length == 0 && m.ReturnType == typeof(void))
+                                    {
+                                        classes.Add(type1.Name);
+                                        methods.Add(m.Name);
+                                    }
+                                }
+                                int currentIdx = methods.IndexOf(methodName.stringValue);
+                                int shownIdx = Mathf.Clamp(currentIdx < 0 ? 0 : currentIdx, 0, Math.Max(methods.Count - 1, 0));
+                                int newIdx = EditorGUI.Popup(new Rect(rect.x, y, rect.width, h), "Method", shownIdx, methods.ToArray());
+                                if (methods.Count > 0 && newIdx != currentIdx)
+                                {
+                                    methodName.stringValue = methods[newIdx];
+                                    className.stringValue = classes[newIdx];
+                                }
                             }
-                            int currentIdx = methods.IndexOf(methodName.stringValue);
-                            int shownIdx = Mathf.Clamp(currentIdx < 0 ? 0 : currentIdx, 0, Math.Max(methods.Count - 1, 0));
-                            int newIdx = EditorGUI.Popup(new Rect(rect.x, y, rect.width, h), "Method", shownIdx, methods.ToArray());
-                            if (methods.Count > 0 && newIdx != currentIdx) methodName.stringValue = methods[newIdx];
                         }
                     }
                     else if (actionType == SystemTray.TrayActionType.Method)

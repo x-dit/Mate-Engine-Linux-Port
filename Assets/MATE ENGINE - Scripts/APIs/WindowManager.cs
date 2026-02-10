@@ -516,7 +516,9 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     {
         if (_display == IntPtr.Zero) return false;
 
-        if (XQueryKeymap(_display, out var keymap) == 0)
+        byte[] keymap = new byte[32];
+
+        if (XQueryKeymap(_display, keymap) == 0)
             return false;
 
         // Check keycodes 8 to 255 (skip 0–7 which are usually unused)
@@ -1698,7 +1700,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         ref int rootX, ref int rootY, ref int winX, ref int winY, ref uint mask);
         
     [DllImport(LibX11)]
-    private static extern int XQueryKeymap(IntPtr display, out byte[] keymap);
+    private static extern int XQueryKeymap(IntPtr display, [In, Out] byte[] keymap);
 
     [DllImport(LibX11)]
     private static extern int XFlush(IntPtr display);

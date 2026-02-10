@@ -155,6 +155,11 @@ public static class EarlyEnvSet
                 dialog.Hide();
                 Gtk.Application.Quit();
             };
+            dialog.DestroyEvent += (_, _) =>
+            {
+                dialog.Hide();
+                Gtk.Application.Quit();
+            };
             dialog.ShowAll();
             Gtk.Application.Run();
             return false;

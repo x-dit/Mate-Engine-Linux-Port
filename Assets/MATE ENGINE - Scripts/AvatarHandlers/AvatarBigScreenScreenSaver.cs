@@ -34,9 +34,6 @@ public class AvatarBigScreenScreenSaver : MonoBehaviour
     private Vector2 lastMousePos;
     private float idleTimer = 0f;
     
-
-    [DllImport("libX11.so")]
-    private static extern short XQueryKeymap(int vKey);
     void Start()
     {
         bigScreenHandler = GetComponent<AvatarBigScreenHandler>();
