@@ -287,6 +287,14 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         return Vector2.zero;
     }
 
+    public bool GetWindowPosition(out float x, out float y)
+    {
+        var result = XTranslateCoordinates(_display, _unityWindow, _rootWindow, 0, 0, out var absX, out var absY, out _);
+        x = absX;
+        y = absY;
+        return result;
+    }
+
     public void SetWindowPosition(float x, float y)
     {
         SetWindowPosition(new Vector2(x, y));
@@ -451,6 +459,20 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         XFree(prop);
         // Map to string (add XGetAtomName if needed)
         return XGetAtomName(_display, typeAtom);
+    }
+
+    public bool GetWindowSize(out float x, out float y)
+    {
+        var result = GetWindowSize();
+        if (result != Vector2.zero)
+        {
+            x = result.x;
+            y = result.y;
+            return true;
+        }
+        x = 0f;
+        y = 0f;
+        return false;
     }
 
     public Vector2 GetWindowSize(IntPtr window = default)

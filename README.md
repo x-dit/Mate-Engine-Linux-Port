@@ -13,7 +13,7 @@
 > Thanks for your understanding and support! 🚀
 
 # Mate-Engine-Linux-Port
-This is an **unofficial** Linux port of shinyflvre's MateEngine - A free Desktop Mate (the costy desktop pet software) alternative with a lightweight interface and custom VRM support.
+This is an **unofficial** Linux port of shinyflvre's [MateEngine](https://github.com/shinyflvre/Mate-Engine) - A free Desktop Mate (the costy desktop pet software) alternative with a lightweight interface and custom VRM support.
 Tested on Ubuntu 24.04 LTS.
 
 ![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
@@ -75,7 +75,6 @@ Run `build.sh` script under project root in a terminal, then wait until command 
 
 ### Known Issues
 - Window snapping and dock sitting don't work on XWayland Interface
-- Crashes at low system performance (`pa_mainloop_iterate`)
 - Mods do not load correctly (delayed fix)
 
 ### Removed
@@ -97,7 +96,7 @@ This project lacks further testing and updates. Feel free to make PRs to contrib
 > 项目仍在维护，但优先级在高考前会降低。
 
 # Mate-Engine-Linux-Port
-这是一个非官方的MateEngine Linux移植版 - 一个免费的Desktop Mate替代品（桌宠软件），具有轻量级界面和自定义VRM支持。
+这是一个非官方的[MateEngine](https://github.com/shinyflvre/Mate-Engine) Linux移植版 - 一个免费的Desktop Mate替代品（桌宠软件），具有轻量级界面和自定义VRM支持。
 已在Ubuntu 24.04 LTS上测试。
 
 ![](https://raw.githubusercontent.com/Marksonthegamer/Mate-Engine-Linux-Port/refs/heads/main/Screenshot.png)
@@ -159,7 +158,6 @@ sudo pacman -S libpulse gtk3 glib2 libx11 libxext libxrender libxrander libxdama
 
 ### 已知问题
 - 坐在窗口和程序坞上无法在 XWayland 协议上正常工作
-- 系统性能较低时崩溃（`pa_mainloop_iterate`）
 - Mod 不会正常加载
 
 ### 已删除
