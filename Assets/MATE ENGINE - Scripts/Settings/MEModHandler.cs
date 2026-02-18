@@ -236,18 +236,6 @@ public class MEModHandler : MonoBehaviour
             {
                 // eat up all errors
             }
-            try
-            {
-                instance = Instantiate(prefab);
-                foreach (var text in GetComponentsInChildren<TMP_Text>())
-                {
-                    text.font = liberationSans;
-                }
-            }
-            catch
-            {
-                // eat up all errors
-            }
         }
 
         // try { bundle.Unload(false); } catch { }
