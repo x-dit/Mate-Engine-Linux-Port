@@ -55,7 +55,7 @@ public static class EarlyEnvSet
         return;
         #endif
         setenv("NO_AT_BRIDGE", "1", 0);
-        string[] candidates = {"libX11.so.6", "libXext.so.6", "libXrender.so.1", "libXdamage.so.1", "libXrandr.so.2", "libXcursor.so.1", "libpulse.so.0", "libgdk-3.so.0", "libgtk-3.so.0", "libayatana-appindicator3.so.1"};
+        string[] candidates = {"libX11.so.6", "libXext.so.6", "libXrender.so.1", "libXdamage.so.1", "libXrandr.so.2", "libXcursor.so.1", "libXcomposite.so.1", "libpulse.so.0", "libgdk-3.so.0", "libgtk-3.so.0", "libayatana-appindicator3.so.1"};
         List<string> missing = new();
         foreach (var name in candidates)
         {

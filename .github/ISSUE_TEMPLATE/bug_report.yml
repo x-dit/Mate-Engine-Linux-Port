@@ -55,6 +55,7 @@ body:
       label: X11 or Wayland
       description: Is your window manager based on X11 or Wayland?
       options:
+        - "**Please Specify**"
         - "X11"
         - "Wayland"
     validations:

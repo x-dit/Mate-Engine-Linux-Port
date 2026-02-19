@@ -123,7 +123,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         {
             ShowError("No matching windows found for PID.");
         }
-
+        XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask | PropertyChangeMask);
         EnableClickThroughTransparency();
         LoadCursors();
     }
@@ -169,6 +169,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         }
 
         XSetErrorHandler(ShowError);
+        RegisterExtension();
+
 
         _rootWindow = XDefaultRootWindow(_display);
         
@@ -183,6 +185,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         _netWmWindowTypeDock = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_DOCK", false);
         _netWmWindowTypeNormal = XInternAtom(_display, "_NET_WM_WINDOW_TYPE_NORMAL", false);
         _motifHintsAtom = XInternAtom(_display, "_MOTIF_WM_HINTS", false);
+        _wakeupAtom = XInternAtom(_display, "_SDL_WAKEUP", false);
     }
         
     private int ShowError(IntPtr display, IntPtr e)
@@ -191,7 +194,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         return 0;
     }
 
-    private void ShowError(string error) => Debug.LogError(GetType().Name + ": " + error);
+    private void ShowError(string error)
+    {
+        Console.WriteLine($"\u001b[31m{GetType().Name}: {error}\u001b[0m");
+    }
 
     private string LookupError(IntPtr errorEvent)
     {
@@ -213,36 +219,197 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return $"Unknown error code: {error.error_code}";
         }
     
-        return message;
+        return $"{message}, Module: {GetRequestName(error.request_code)}, minor_code: {error.minor_code}, Resource ID: 0x{error.resourceid:X}";
     }
+    
+    private Dictionary<int, string> _x11ExtensionsMap = new();
+    
+    private void RegisterExtension()
+    {
+        IntPtr listPtr = XListExtensions(_display, out int count);
+    
+        if (listPtr == IntPtr.Zero || count == 0) return;
+
+        try
+        {
+            for (int i = 0; i < count; i++)
+            {
+                IntPtr strPtr = Marshal.ReadIntPtr(listPtr, i * IntPtr.Size);
+            
+                string name = Marshal.PtrToStringAnsi(strPtr);
+            
+                if (!string.IsNullOrEmpty(name))
+                {
+                    if (XQueryExtension(_display, name, out int opcode, out _, out _) == 0)
+                    {
+                        ShowError($"Cannot query extension {name}");
+                        continue;
+                    }
+                    if (opcode > 0)
+                    {
+                        _x11ExtensionsMap[opcode] = name;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            XFree(listPtr);
+        }
+    }
+    
+    private string GetRequestName(byte requestCode)
+    {
+        int code = requestCode;
+
+        if (_x11ExtensionsMap.TryGetValue(code, out string extName))
+        {
+            return $"[{extName}]";
+        }
+
+        return requestCode switch
+        {
+            1 => "X_CreateWindow",
+            2 => "X_ChangeWindowAttributes",
+            3 => "X_GetWindowAttributes",
+            4 => "X_DestroyWindow",
+            5 => "X_DestroySubwindows",
+            6 => "X_ChangeSaveSet",
+            7 => "X_ReparentWindow",
+            8 => "X_MapWindow",
+            9 => "X_MapSubwindows",
+            10 => "X_UnmapWindow",
+            11 => "X_UnmapSubwindows",
+            12 => "X_ConfigureWindow",
+            13 => "X_CirculateWindow",
+            14 => "X_GetGeometry",
+            15 => "X_QueryTree",
+            16 => "X_InternAtom",
+            17 => "X_GetAtomName",
+            18 => "X_ChangeProperty",
+            19 => "X_DeleteProperty",
+            20 => "X_GetProperty",
+            21 => "X_ListProperties",
+            22 => "X_SetSelectionOwner",
+            23 => "X_GetSelectionOwner",
+            24 => "X_ConvertSelection",
+            25 => "X_SendEvent",
+            26 => "X_GrabPointer",
+            27 => "X_UngrabPointer",
+            28 => "X_GrabButton",
+            29 => "X_UngrabButton",
+            30 => "X_ChangeActivePointerGrab",
+            31 => "X_GrabKeyboard",
+            32 => "X_UngrabKeyboard",
+            33 => "X_GrabKey",
+            34 => "X_UngrabKey",
+            35 => "X_AllowEvents",
+            36 => "X_GrabServer",
+            37 => "X_UngrabServer",
+            38 => "X_QueryPointer",
+            39 => "X_GetMotionEvents",
+            40 => "X_TranslateCoords",
+            41 => "X_WarpPointer",
+            42 => "X_SetInputFocus",
+            43 => "X_GetInputFocus",
+            44 => "X_QueryKeymap",
+            45 => "X_OpenFont",
+            46 => "X_CloseFont",
+            47 => "X_QueryFont",
+            48 => "X_QueryTextExtents",
+            49 => "X_ListFonts",
+            50 => "X_ListFontsWithInfo",
+            51 => "X_SetFontPath",
+            52 => "X_GetFontPath",
+            53 => "X_CreatePixmap",
+            54 => "X_FreePixmap",
+            55 => "X_CreateGC",
+            56 => "X_ChangeGC",
+            57 => "X_CopyGC",
+            58 => "X_SetDashes",
+            59 => "X_SetClipRectangles",
+            60 => "X_FreeGC",
+            61 => "X_ClearArea",
+            62 => "X_CopyArea",
+            63 => "X_CopyPlane",
+            64 => "X_PolyPoint",
+            65 => "X_PolyLine",
+            66 => "X_PolySegment",
+            67 => "X_PolyRectangle",
+            68 => "X_PolyArc",
+            69 => "X_FillPoly",
+            70 => "X_PolyFillRectangle",
+            71 => "X_PolyFillArc",
+            72 => "X_PutImage",
+            73 => "X_GetImage",
+            74 => "X_PolyText8",
+            75 => "X_PolyText16",
+            76 => "X_ImageText8",
+            77 => "X_ImageText16",
+            78 => "X_CreateColormap",
+            79 => "X_FreeColormap",
+            80 => "X_CopyColormapAndFree",
+            81 => "X_InstallColormap",
+            82 => "X_UninstallColormap",
+            83 => "X_ListInstalledColormaps",
+            84 => "X_AllocColor",
+            85 => "X_AllocNamedColor",
+            86 => "X_AllocColorCells",
+            87 => "X_AllocColorPlanes",
+            88 => "X_FreeColors",
+            89 => "X_StoreColors",
+            90 => "X_StoreNamedColor",
+            91 => "X_QueryColors",
+            92 => "X_LookupColor",
+            93 => "X_CreateCursor",
+            94 => "X_CreateGlyphCursor",
+            95 => "X_FreeCursor",
+            96 => "X_RecolorCursor",
+            97 => "X_QueryBestSize",
+            98 => "X_QueryExtension",
+            99 => "X_ListExtensions",
+            100 => "X_ChangeKeyboardMapping",
+            101 => "X_GetKeyboardMapping",
+            102 => "X_ChangeKeyboardControl",
+            103 => "X_GetKeyboardControl",
+            104 => "X_Bell",
+            105 => "X_ChangePointerControl",
+            106 => "X_GetPointerControl",
+            107 => "X_SetScreenSaver",
+            108 => "X_GetScreenSaver",
+            109 => "X_ChangeHosts",
+            110 => "X_ListHosts",
+            111 => "X_SetAccessControl",
+            112 => "X_SetCloseDownMode",
+            113 => "X_KillClient",
+            114 => "X_RotateProperties",
+            115 => "X_ForceScreenSaver",
+            116 => "X_SetPointerMapping",
+            117 => "X_GetPointerMapping",
+            118 => "X_SetModifierMapping",
+            119 => "X_GetModifierMapping",
+            127 => "X_NoOperation",
+            _ => $"Request_{requestCode}"
+        };
+    }
+    
+    private IntPtr _wakeupAtom;
 
     private void Dispose()
     {
+        if (_closing) return;
         _running = false;
         _closing = true;
-    
-        if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero)
+
+        if (_display != IntPtr.Zero && _unityWindow != IntPtr.Zero && _wakeupAtom != IntPtr.Zero)
         {
-            var wakeupAtom = XInternAtom(_display, "WAKEUP_THREAD", false);
-        
-            XClientMessageEvent msg = new XClientMessageEvent
-            {
-                type = ClientMessage,
-                window = _unityWindow,
-                message_type = wakeupAtom,
-                format = 32,
-                data = new IntPtr[5]
-            };
-            XSendEvent(_display, _unityWindow, false, 0, ref msg);
+            XCompositeUnredirectWindow(_display, _unityWindow, CompositeRedirectAutomatic);
+            XStoreName(_display, _unityWindow, "Closing...");
             XFlush(_display);
         }
-
-        if (_x11EventThread != null && _x11EventThread.IsAlive)
+        if (_x11EventThread is { IsAlive: true })
         {
-            if (!_x11EventThread.Join(1000)) 
-            {
-                throw new TimeoutException($"{GetType().Name}: X11 event thread did not exit in time.");
-            }
+            _x11EventThread.Join();
         }
         if (_display != IntPtr.Zero)
         {
@@ -331,13 +498,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 window = _unityWindow,
                 message_type = _netMoveResizeWindow,
                 format = 32,
-                data = new IntPtr[5]
             };
-            xClient.data[0] = new IntPtr((1 << 12) | (1 << 9) | (1 << 8) | 10);
-            xClient.data[1] = new((int)position.x);
-            xClient.data[2] = new((int)position.y);
-            xClient.data[3] = IntPtr.Zero;
-            xClient.data[4] = IntPtr.Zero;
+            xClient.data0 = new IntPtr((1 << 12) | (1 << 9) | (1 << 8) | 10);
+            xClient.data1 = new((int)position.x);
+            xClient.data2 = new((int)position.y);
+            xClient.data3 = IntPtr.Zero;
+            xClient.data4 = IntPtr.Zero;
 
             XSendEvent(_display, _rootWindow, false, SubstructureRedirectMask | SubstructureNotifyMask, ref xClient);
             XFlush(_display);
@@ -522,14 +688,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 window = _unityWindow,
                 message_type = _netMoveResizeWindow,
                 format = 32,
-                data = new IntPtr[5]
             };
-            xClient.data[0] = new IntPtr((1 << 12) | (1 << 10) | (1 << 11));
-            xClient.data[1] = IntPtr.Zero;
-            xClient.data[2] = IntPtr.Zero;
-            xClient.data[3] = new((int)size.x);
-            xClient.data[4] = new((int)size.y);
-
+            xClient.data0 = new IntPtr((1 << 12) | (1 << 10) | (1 << 11));
+            xClient.data1 = IntPtr.Zero;
+            xClient.data2 = IntPtr.Zero;
+            xClient.data3 = new((int)size.x);
+            xClient.data4 = new((int)size.y);
+            
             XSendEvent(_display, _rootWindow, false, SubstructureRedirectMask | SubstructureNotifyMask, ref xClient);
             XFlush(_display);
         }
@@ -832,14 +997,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             window = _unityWindow,
             message_type = _netWmState,
             format = 32,
-            data = new IntPtr[5]
         };
-        xClient.data[0] = new IntPtr(topmost ? 1 : 0); // 1=ADD, 0=REMOVE
-        xClient.data[1] = _netWmStateAbove;
-        xClient.data[2] = IntPtr.Zero;
-        xClient.data[3] = IntPtr.Zero;
-        xClient.data[4] = IntPtr.Zero;
-
+        xClient.data0 = new IntPtr(topmost ? 1 : 0); // 1=ADD, 0=REMOVE
+        xClient.data1 = _netWmStateAbove;
+        xClient.data2 = IntPtr.Zero;
+        xClient.data3 = IntPtr.Zero;
+        xClient.data4 = IntPtr.Zero;
+        
         XSendEvent(_display, _rootWindow, false, 0x00100000 | SubstructureRedirectMask, ref xClient);
         XFlush(_display);
     }
@@ -856,14 +1020,13 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             window = _unityWindow,
             message_type = _netWmState,
             format = 32,
-            data = new IntPtr[5]
         };
-        msg.data[0] = new(reallyHide ? 1 : 0);
-        msg.data[1] = _netWmStateSkipTaskbar;
-        msg.data[2] = IntPtr.Zero;
-        msg.data[3] = IntPtr.Zero;
-        msg.data[4] = new(1);
-                
+        msg.data0 = new(reallyHide ? 1 : 0);
+        msg.data1 = _netWmStateSkipTaskbar;
+        msg.data2 = IntPtr.Zero;
+        msg.data3 = IntPtr.Zero;
+        msg.data4 = new(1);
+
         XSendEvent(_display, _rootWindow, false, 0x10000L | 0x20000L, ref msg);
         XFlush(_display);
     }
@@ -1143,7 +1306,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             return;
         }
 
-        XSelectInput(_display, _unityWindow, StructureNotifyMask | EnterWindowMask | LeaveWindowMask);
+        XCompositeRedirectWindow(_display, _unityWindow, CompositeRedirectAutomatic);
         
         _useShm = XShmQueryExtension(_display);
         if (_useShm)
@@ -1185,7 +1348,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                         {
                             _useShm = false;
                         }
-                        else 
+                        else
                         {
                             _shmWidth = attrs.width;
                             _shmHeight = attrs.height;
@@ -1282,7 +1445,23 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             }
         }
 
-        if (_useShm)
+        IntPtr backingPixmap = XCompositeNameWindowPixmap(_display, _unityWindow);
+
+        if (backingPixmap != IntPtr.Zero)
+        {
+            if (XShmGetImage(_display, backingPixmap, _shmImagePtr, 0, 0, AllPlanes))
+            {
+                xImagePtr = _shmImagePtr;
+            }
+            else
+            {
+                ShowError("XShmGetImage on Pixmap failed.");
+                _useShm = false;
+            }
+                
+            XFreePixmap(_display, backingPixmap);
+        }
+        else
         {
             if (XShmGetImage(_display, _unityWindow, _shmImagePtr, 0, 0, AllPlanes))
             {
@@ -1290,8 +1469,8 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
             }
             else
             {
-                ShowError("XShmGetImage failed unexpectedly.");
-                _useShm = false; 
+                ShowError("XShmGetImage on Window failed unexpectedly.");
+                _useShm = false;
             }
         }
 
@@ -1404,6 +1583,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
 
         return image;
     }
+    
     private void ApplyShaping()
     {
         try
@@ -1462,7 +1642,6 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
                 }
             }
         }
-        catch (OperationCanceledException) { /* Expected on cancel */ }
         catch (Exception e)
         {
             Debug.LogException(e);
@@ -1560,8 +1739,10 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private const long SubstructureNotifyMask = 0x00040000;
     private const long EnterWindowMask = (1L << 4);
     private const long LeaveWindowMask = (1L << 5);
+    private const long PropertyChangeMask = (1L << 22);
     private const int ConfigureNotify = 22;
     private const int DestroyNotify = 17;
+    private const int PropertyNotify = 28;
     private const int ShapeBounding = 0;
     private const int ShapeInput = 2;
     private const int ShapeSet = 0;
@@ -1575,6 +1756,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private const uint XC_HAND2 = 60;
     private const int EnterNotify = 7;
     private const int LeaveNotify = 8;
+    private const int CompositeRedirectAutomatic = 0;
 
     private const int IPC_RMID = 0;
     private const int IPC_PRIVATE = 0;
@@ -1586,6 +1768,7 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private const string LibXDamage = "libXdamage.so.1";
     private const string LibXRandR = "libXrandr.so.2";
     private const string LibXCursor = "libXcursor.so.1";
+    private const string LibXComposite = "libXcomposite.so.1";
     private const string LibC = "libc.so.6";
 
     // X11 Event structures
@@ -1599,9 +1782,11 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
         public IntPtr window;
         public IntPtr message_type;
         public int format;
-
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 5)]
-        public IntPtr[] data;
+        public IntPtr data0;
+        public IntPtr data1;
+        public IntPtr data2;
+        public IntPtr data3;
+        public IntPtr data4;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -2116,6 +2301,12 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     private static extern XErrorHandler XSetErrorHandler(XErrorHandler handler);
     
     [DllImport(LibX11)]
+    private static extern int XQueryExtension(IntPtr display, string name, out int opcode, out int first_event, out int first_error);
+    
+    [DllImport(LibX11)]
+    private static extern IntPtr XListExtensions(IntPtr display, out int nExtensions);
+    
+    [DllImport(LibX11)]
     private static extern int XSetTransientForHint(IntPtr display, IntPtr w, IntPtr propWindow);
     
     [DllImport(LibXExt)]
@@ -2170,6 +2361,21 @@ public class WindowManager : MonoBehaviour, IPointerDownHandler, IPointerUpHandl
     
     [DllImport(LibC)]
     private static extern int shmctl(int shmid, int cmd, IntPtr buf);
+    
+    [DllImport(LibXComposite)]
+    private static extern void XCompositeRedirectWindow(IntPtr display, IntPtr window, int update);
+    
+    [DllImport(LibXComposite)]
+    private static extern void XCompositeUnredirectWindow(IntPtr display, IntPtr window, int update);
 
+    [DllImport(LibXComposite)]
+    private static extern IntPtr XCompositeNameWindowPixmap(IntPtr display, IntPtr window);
+
+    [DllImport(LibX11)]
+    private static extern int XFreePixmap(IntPtr display, IntPtr pixmap);
+    
+    [DllImport(LibX11)]
+    private static extern int XStoreName(IntPtr display, IntPtr window, string window_name);
+    
     #endregion
 }
