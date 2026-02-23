@@ -21,7 +21,7 @@ Tested on Ubuntu 24.04 LTS.
 ### Installation
 Simply grab a prebuilt one in [Releases](https://github.com/Marksonthegamer/Mate-Engine-Linux-Port/releases/) page and decompress it. Then, run the `launch.sh` script in the output directory (This script is necessary for window transparency. For KDE, you also need to **disable "Allow applications to block compositing"** in `systemsettings`).
 
-Arch users may simply use the following command:
+Arch users may simply use the following command to install:
 ```bash
 sudo yay -S mateengine
 ```
