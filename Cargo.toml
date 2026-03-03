@@ -1,7 +1,12 @@
 [package]
-name = "LinaMate"
+name = "Mate-Engine-Linux-Port"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-
+gilrs = "0.8"
+nalgebra = "0.29"
+ron = "0.7"
+tokio = { version = "1", features = ["full"] }
+rodio = "0.13"
+sqlx = { version = "0.5", features = ["sqlite", "runtime-tokio-rustls"] }
